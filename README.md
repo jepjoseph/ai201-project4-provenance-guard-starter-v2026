@@ -153,7 +153,7 @@ Request:
 
 ```json
 {
-  "text": "<contents of results/calibration/sample_B_human_natural.txt>",
+  "text": "Debugging a React and Express Application: what I learned\n\nLong time programmer but somewhat new to react/express/javascript. I'm building a site for practice and One page I'm having trouble with is pulling data from another site doing some calculations and then pulling more data. I like this design as it puts the work in the api and the react app can concentrate on display. The trouble is that the other site is slow and I think the react app is timeing out, its kinda of hard to debug because everytime I sit to debug it then everything works. Bot overall its not a great design because the looping in the api is open ended so I can't predict how long it will take.\n\nBack in the old days with a TCP socket I'd have the server send a heartbeat back every second and sent the timeout to 2 seconds. Here I don't think HTTP has anyway to do that. Also I don't see anyway to set or adjust any timeouts. I could break this up into multiple smaller requests but that doesn't seem to fix the core issue of not controlling the timeout and makes the overall design worse.\n\nGoogling around has been rough so many versions of fetch over the years. I'm using a react app and express and keeping it as vanilla as possible.",
   "creator_id": "calibration-sample_B_human_natural.txt"
 }
 ```
@@ -237,17 +237,17 @@ all three outcomes with real detector inputs.
 
 ## How I Used AI
 
-**Moment 1**
+**Moment 1 - Building and testing the scoring system**
 
-- *What I asked for:*
-- *What came back:*
-- *What I changed:*
+- **What I asked for:** I asked AI to help me implement the stylometry functions and combine their results with the model-based detection score. I also wanted to understand how to test the scoring system using different human-written and AI-generated samples.
+- **What came back:** AI suggested Python implementations for measuring sentence-length variation, vocabulary diversity, and punctuation density. It also helped me create PowerShell scripts to inspect the project, test the functions, and compare the scores.
+- **What I changed:** I ran the implementations and tests in my development environment and reviewed the results. The four calibration samples all received the `unsure` classification, so I kept that limitation in the README rather than claiming that the detector could reliably distinguish human and AI writing.
 
-**Moment 2**
+**Moment 2 - Implementing appeals and audit logging**
 
-- *What I asked for:*
-- *What came back:*
-- *What I changed:*
+- **What I asked for:** I asked AI to help me finish the `/appeal` endpoint while preserving the existing project structure and audit functions. I wanted appeals to work only for existing submissions and to keep the original classification unchanged.
+- **What came back:** AI suggested request validation, checking existing content IDs through `audit.entries_for()`, and recording appeals through `audit.log_appeal()`. It also provided scripts to test successful submissions, invalid appeals, and audit history.
+- **What I changed:** I applied the implementation, ran the API tests, and verified the results. I confirmed that valid appeals returned `under_review`, invalid requests were rejected, and the original decisions remained in the audit log. I also tested the workflow using the actual detector and documented the results.
 
 <!-- ═══════════════════════ UNIT 8 — THE TEST ═══════════════════════ -->
 
@@ -377,16 +377,16 @@ that produced it:
 
      SUBMISSION CHECKLIST — unit 7
 
-       [ ] criteria.md has five numbered criteria, each naming a target
-       [ ] Each has a reason underneath
-       [ ] POST /submit returns content_id, guess, confidence, label,
+       [x] criteria.md has five numbered criteria, each naming a target
+       [x] Each has a reason underneath
+       [x] POST /submit returns content_id, guess, confidence, label,
            model_score and style_score
-       [ ] Two signals that measure DIFFERENT things, each with a named blind spot
-       [ ] Three label variants, all reachable, written out in full
-       [ ] POST /appeal changes status and writes to the log
-       [ ] Signals and Scoring names scoring.py::combine_signals
-       [ ] Sample Run: a submission AND an appeal, as pasted text
-       [ ] At least four new commits
+       [x] Two signals that measure DIFFERENT things, each with a named blind spot
+       [x] Three label variants, all reachable, written out in full
+       [x] POST /appeal changes status and writes to the log
+       [x] Signals and Scoring names scoring.py::combine_signals
+       [x] Sample Run: a submission AND an appeal, as pasted text
+       [x] At least four new commits
        [ ] Repository URL submitted — WRITE IT DOWN
 
      SUBMISSION CHECKLIST — unit 8
