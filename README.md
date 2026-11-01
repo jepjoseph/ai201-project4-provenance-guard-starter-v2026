@@ -373,7 +373,6 @@ that produced it:
 
 
 
-<!-- ═════════════════════════════════════════════════════════════════════
 
      SUBMISSION CHECKLIST — unit 7
 
@@ -387,8 +386,9 @@ that produced it:
        [x] Signals and Scoring names scoring.py::combine_signals
        [x] Sample Run: a submission AND an appeal, as pasted text
        [x] At least four new commits
-       [ ] Repository URL submitted — WRITE IT DOWN
+       [x] Repository URL submitted — WRITE IT DOWN
 
+<!-- ═════════════════════════════════════════════════════════════════════
      SUBMISSION CHECKLIST — unit 8
 
        [ ] Rate limiting on /submit, with your numbers justified
