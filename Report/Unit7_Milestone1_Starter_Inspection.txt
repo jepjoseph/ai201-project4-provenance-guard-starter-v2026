@@ -1,0 +1,1766 @@
+﻿UNIT 7 - MILESTONE 1 STARTER INSPECTION
+Generated: 2026-10-28 21:26:47
+Project: D:\FAU\Session Fall 2026\AI201\LAB07\ai201-project4-provenance-guard-starter-v2026
+
+
+================================================================================
+FILE: app.py
+================================================================================
+   1: #!/usr/bin/env python3
+   2: """
+   3: Provenance Guard â€” the web service.
+   4: 
+   5:     python app.py
+   6: 
+   7: Then, in another terminal:
+   8: 
+   9:     curl -X POST http://127.0.0.1:5000/ping \
+  10:       -H "Content-Type: application/json" \
+  11:       -d '{"message": "hello"}'
+  12: 
+  13: That's the example route. It works right now, before you've written anything.
+  14: **Leave it alone** â€” it's your control. When something breaks later, check that
+  15: `/ping` still answers: if it does, the problem is in your handler; if it
+  16: doesn't, it's the service itself.
+  17: 
+  18: Routes:
+  19: 
+  20:     POST /ping        the worked example. Already works. Don't edit it
+  21:     POST /submit      â† YOU BUILD THIS (Milestone 3, 4, 5)
+  22:     POST /appeal      â† YOU BUILD THIS (Milestone 5)
+  23:     GET  /log         the audit log. Already works
+  24:     GET  /health      is the service up, and is the model loaded
+  25: """
+  26: 
+  27: import uuid
+  28: 
+  29: from flask import Flask, jsonify, request
+  30: 
+  31: import audit
+  32: import config
+  33: 
+  34: app = Flask(__name__)
+  35: 
+  36: 
+  37: # â”€â”€ Rate limiting â€” UNIT 8 â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  38: # Off until you turn it on. In unit 8, Milestone 1:
+  39: #
+  40: #   1. Set RATE_LIMITING_ENABLED = True in config.py (or AI201_RATE_LIMITS=1)
+  41: #   2. Choose your numbers there
+  42: #   3. Uncomment the @limiter.limit(...) line on /submit below
+  43: #
+  44: # The order doesn't matter. While limiting is off, that decorator is a no-op
+  45: # that quietly does nothing, so uncommenting it early costs you nothing â€” but
+  46: # it also means no 429 until you've done step 1.
+  47: #
+  48: # The storage backend is preconfigured, which stops Flask-Limiter printing a
+  49: # warning on every start. In-memory is right for one laptop and wrong for
+  50: # anything real â€” a restart forgets every count.
+  51: 
+  52: class _LimiterOff:
+  53:     """
+  54:     Stands in for the real limiter while rate limiting is off.
+  55: 
+  56:     It makes @limiter.limit(...) a decorator that returns the route
+  57:     untouched, so uncommenting the line before you flip the setting is
+  58:     harmless instead of a crash on startup.
+  59:     """
+  60: 
+  61:     def limit(self, *args, **kwargs):
+  62:         return lambda view: view
+  63: 
+  64: 
+  65: limiter = _LimiterOff()
+  66: if config.RATE_LIMITING_ENABLED:
+  67:     from flask_limiter import Limiter
+  68:     from flask_limiter.util import get_remote_address
+  69: 
+  70:     def rate_limit_key():
+  71:         """
+  72:         Who a request counts against.
+  73: 
+  74:         Falling back to the caller's address is the easy version. Unit 8's
+  75:         stretch asks about per-creator limits instead â€” and the difference
+  76:         matters: one script can look like a thousand callers, and one household
+  77:         can look like one.
+  78:         """
+  79:         payload = request.get_json(silent=True)
+  80:         # A body that parses as JSON but isn't an object â€” a bare list or
+  81:         # string â€” has no .get. Without this guard the key function raises
+  82:         # BEFORE the route runs, and a malformed request becomes a 500 that
+  83:         # looks like your handler crashed when your handler never ran.
+  84:         if not isinstance(payload, dict):
+  85:             return get_remote_address()
+  86:         creator = payload.get("creator_id")
+  87:         return creator if isinstance(creator, str) and creator.strip() else get_remote_address()
+  88: 
+  89:     limiter = Limiter(
+  90:         key_func=rate_limit_key,
+  91:         app=app,
+  92:         storage_uri=config.RATE_LIMIT_STORAGE,
+  93:         default_limits=[],
+  94:     )
+  95: 
+  96:     @app.errorhandler(429)
+  97:     def rate_limited(exc):
+  98:         """
+  99:         A rejected request still leaves a trace.
+ 100: 
+ 101:         âš ï¸ An attack that shows up only as an absence is one you'll never find.
+ 102:         """
+ 103:         payload = request.get_json(silent=True)
+ 104:         if not isinstance(payload, dict):
+ 105:             payload = {}
+ 106:         audit.log_rejection(
+ 107:             creator_id=payload.get("creator_id", "unknown"),
+ 108:             reason="rate_limited",
+ 109:             limit=str(exc.description),
+ 110:         )
+ 111:         return jsonify({
+ 112:             "error": "rate_limited",
+ 113:             "message": "Too many submissions. Try again shortly.",
+ 114:             "limit": str(exc.description),
+ 115:         }), 429
+ 116: 
+ 117: 
+ 118: # â”€â”€ The worked example. Already works. Don't edit. â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+ 119: 
+ 120: @app.post("/ping")
+ 121: def ping():
+ 122:     """
+ 123:     Everything a route needs, in six lines.
+ 124: 
+ 125:     JSON arrives as a dict. You pull things out of it. You return a dict and
+ 126:     the framework turns it into a response. That's the whole idea.
+ 127:     """
+ 128:     payload = request.get_json(silent=True) or {}
+ 129:     return jsonify({
+ 130:         "ok": True,
+ 131:         "you_sent": payload.get("message"),
+ 132:         "service": "provenance-guard",
+ 133:     })
+ 134: 
+ 135: 
+ 136: @app.get("/health")
+ 137: def health():
+ 138:     """Is the service up, and has the model been downloaded yet?"""
+ 139:     import detector
+ 140: 
+ 141:     loaded = detector._model is not None
+ 142:     return jsonify({
+ 143:         "ok": True,
+ 144:         "detector_model": config.DETECTOR_MODEL,
+ 145:         "detector_loaded": loaded,
+ 146:         "rate_limiting": config.RATE_LIMITING_ENABLED,
+ 147:         "log_entries": len(audit.read_entries()),
+ 148:     })
+ 149: 
+ 150: 
+ 151: # â”€â”€ YOU BUILD THIS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+ 152: 
+ 153: @app.post("/submit")
+ 154: # @limiter.limit(f"{config.RATE_LIMIT_PER_MINUTE}/minute;{config.RATE_LIMIT_PER_DAY}/day")
+ 155: def submit():
+ 156:     """
+ 157:     Take a piece of text, decide about it, log the decision, answer.
+ 158:     â† TODO â€” Milestones 3, 4 and 5
+ 159: 
+ 160:     Expects JSON:
+ 161:         {"text": "...", "creator_id": "..."}
+ 162: 
+ 163:     Should return JSON with, at minimum:
+ 164:         {"content_id": "...", "guess": "...", "confidence": 0.0, "label": "...",
+ 165:          "model_score": 0.0, "style_score": 0.0}
+ 166: 
+ 167:     âš ï¸ **Both signal scores go in the response, not just the log.** Unit 8's
+ 168:     `run_attacks.py` and `run_eval.py` read `model_score` and `style_score`
+ 169:     straight off this response and put them in your reports. Leave them out and
+ 170:     every row of next unit's evidence says `null` â€” which is exactly the
+ 171:     diagnostic you need to name a stage and a mechanism. You do not want to
+ 172:     find that out after running the attack set.
+ 173: 
+ 174:     â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+ 175:     Build it in three passes. Do not skip ahead â€” the ordering is how you tell
+ 176:     a broken route from a broken signal.
+ 177: 
+ 178:     **Milestone 3 â€” the route answers.**
+ 179:       1. Return a hardcoded response. Confirm `curl` gets it back before you
+ 180:          add any logic at all.
+ 181:       2. Then pull `text` and `creator_id` out of the payload.
+ 182:       3. Then call ONE signal â€” `detector.model_signal(text)` â€” and put the
+ 183:          real number in. Leave confidence and label as placeholders.
+ 184:       4. Log every submission with `audit.log_decision(...)`. The content_id
+ 185:          matters: `/appeal` needs it, and a student who skips it rebuilds this
+ 186:          whole flow later.
+ 187: 
+ 188:     **Milestone 4 â€” the second signal and the score.**
+ 189:       5. Add `stylometry.style_signal(text)`.
+ 190:       6. Combine them with `scoring.combine_signals(...)`.
+ 191:       7. Log BOTH signal scores alongside the combined one, and put them in the
+ 192:          response too. Next unit you can't diagnose anything without them.
+ 193: 
+ 194:     **Milestone 5 â€” the label.**
+ 195:       8. `scoring.score_to_label(...)` and put the real label in the response.
+ 196: 
+ 197:     â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+ 198:     Worth deciding early, because unit 8's attack set will decide it for you:
+ 199:     what should this do when `text` is missing, empty, or enormous? A crash on
+ 200:     a malformed input is one of the most common real failures there is.
+ 201:     """
+ 202:     payload = request.get_json(silent=True) or {}
+ 203: 
+ 204:     # TODO: delete this and build the route.
+ 205:     return jsonify({
+ 206:         "error": "not_implemented",
+ 207:         "message": "POST /submit isn't built yet â€” see the TODO in app.py.",
+ 208:         "you_sent": {
+ 209:             "text_length": len(payload.get("text", "")),
+ 210:             "creator_id": payload.get("creator_id"),
+ 211:         },
+ 212:     }), 501
+ 213: 
+ 214: 
+ 215: @app.post("/appeal")
+ 216: def appeal():
+ 217:     """
+ 218:     A writer says you got it wrong. â† TODO â€” Milestone 5
+ 219: 
+ 220:     Expects JSON:
+ 221:         {"content_id": "...", "reasoning": "..."}
+ 222: 
+ 223:     Should:
+ 224:       1. Check the content_id actually exists â€” `audit.entries_for(id)` tells
+ 225:          you. A typo here fails silently and looks like a broken endpoint,
+ 226:          which is the single most common way this milestone eats an hour.
+ 227:       2. Record the appeal with `audit.log_appeal(...)`, which moves the item
+ 228:          to `under_review`.
+ 229:       3. Confirm to the writer. No automatic re-checking needed.
+ 230: 
+ 231:     This is the smallest endpoint in the project and the one that matters most
+ 232:     to the person on the other end. It's the only thing standing between a
+ 233:     wrong accusation and nothing at all.
+ 234:     """
+ 235:     payload = request.get_json(silent=True) or {}
+ 236: 
+ 237:     # TODO: delete this and build the route.
+ 238:     return jsonify({
+ 239:         "error": "not_implemented",
+ 240:         "message": "POST /appeal isn't built yet â€” see the TODO in app.py.",
+ 241:         "you_sent": payload,
+ 242:     }), 501
+ 243: 
+ 244: 
+ 245: # â”€â”€ Already works â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+ 246: 
+ 247: @app.get("/log")
+ 248: def get_log():
+ 249:     """
+ 250:     The audit log, most recent last.
+ 251: 
+ 252:         curl "http://127.0.0.1:5000/log?limit=10"
+ 253: 
+ 254:     You need this in unit 8 to paste entries into your README, and you need it
+ 255:     now to see whether your logging is actually working.
+ 256:     """
+ 257:     limit = request.args.get("limit", type=int)
+ 258:     entries = audit.read_entries(limit=limit)
+ 259:     return jsonify({"count": len(entries), "entries": entries})
+ 260: 
+ 261: 
+ 262: def main():
+ 263:     print(f"Provenance Guard on http://{config.HOST}:{config.PORT}")
+ 264:     print(f"  detector model:  {config.DETECTOR_MODEL}")
+ 265:     print(f"  rate limiting:   {'ON' if config.RATE_LIMITING_ENABLED else 'off (unit 8)'}")
+ 266:     print(f"  audit log:       {config.AUDIT_LOG}")
+ 267:     print()
+ 268:     print("Check it's alive:")
+ 269:     print(f'  curl -X POST http://{config.HOST}:{config.PORT}/ping \\')
+ 270:     print('    -H "Content-Type: application/json" \\')
+ 271:     print("    -d '{\"message\": \"hello\"}'")
+ 272:     print()
+ 273:     # debug=True hands out an interactive debugger, so it's local-only â€” see config.py
+ 274:     app.run(host=config.HOST, port=config.PORT, debug=config.DEBUG)
+ 275: 
+ 276: 
+ 277: if __name__ == "__main__":
+ 278:     main()
+
+================================================================================
+FILE: detector.py
+================================================================================
+   1: """
+   2: Signal one: the model signal.
+   3: 
+   4: This is the signal that "reads the text for meaning". It runs a language model
+   5: on your own machine and asks one question: **how predictable is this text?**
+   6: 
+   7: The idea is the one every AI-detection product is built on. A language model
+   8: writes by repeatedly picking a likely next word, so text a model produced tends
+   9: to be text a model finds easy to predict. Human writing wanders more â€” odd word
+  10: choices, abrupt turns, the specific rather than the typical.
+  11: 
+  12: The measure is called **perplexity**. Low perplexity means "I could have
+  13: guessed this"; high perplexity means "that surprised me". This module turns
+  14: that into a 0â€“1 score where **higher means more likely AI**.
+  15: 
+  16:     from detector import model_signal
+  17:     score = model_signal("some text")     # 0.0 human-ish â€¦ 1.0 AI-ish
+  18: 
+  19: Everything runs locally. No account, no key, no card.
+  20: 
+  21: âš ï¸ **The blind spot, which you have to name in Milestone 1.**
+  22: 
+  23: Predictability is not the same thing as authorship. What this signal actually
+  24: rewards is **common words in short, ordinary sentences** â€” and plenty of real
+  25: people write that way.
+  26: 
+  27: Someone writing in a second language, sticking to vocabulary they're sure of.
+  28: A younger writer. Anyone writing plainly on purpose. Measured against gpt2,
+  29: writing like that scores about as machine-like as machine writing does.
+  30: 
+  31: The reverse trips people up too: dense, ornate prose full of rare words often
+  32: scores as *human* on this signal, because rare words are exactly what a
+  33: language model fails to predict. Formality on its own doesn't decide it.
+  34: 
+  35: So the writers this signal is most likely to accuse are the ones with the
+  36: least room to argue back. That is structural rather than a bug you can fix,
+  37: and it is the person Milestone 1 asks you to follow through your service.
+  38: 
+  39: Don't take that on trust â€” it's a claim you can check. Milestone 4 has you run
+  40: four calibration inputs. Add a plainly-written human paragraph to them and see
+  41: for yourself where it lands.
+  42: """
+  43: 
+  44: import math
+  45: 
+  46: import config
+  47: 
+  48: _model = None
+  49: _tokenizer = None
+  50: 
+  51: 
+  52: class DetectorUnavailable(RuntimeError):
+  53:     """The model couldn't be loaded â€” no download yet, or no disk."""
+  54: 
+  55: 
+  56: def _load():
+  57:     """Load the model once and keep it. First call downloads ~550 MB."""
+  58:     global _model, _tokenizer
+  59:     if _model is not None:
+  60:         return _model, _tokenizer
+  61: 
+  62:     try:
+  63:         import torch  # noqa: F401
+  64:         from transformers import AutoModelForCausalLM, AutoTokenizer
+  65:     except ImportError as exc:
+  66:         raise DetectorUnavailable(
+  67:             f"transformers or torch isn't installed ({exc}).\n"
+  68:             f"Run: pip install -r requirements.txt"
+  69:         ) from exc
+  70: 
+  71:     try:
+  72:         _tokenizer = AutoTokenizer.from_pretrained(config.DETECTOR_MODEL)
+  73:         _model = AutoModelForCausalLM.from_pretrained(config.DETECTOR_MODEL)
+  74:         _model.eval()
+  75:     except Exception as exc:  # noqa: BLE001
+  76:         raise DetectorUnavailable(
+  77:             f"Couldn't load '{config.DETECTOR_MODEL}': {exc}\n"
+  78:             f"The first run downloads about 550 MB â€” check your connection and "
+  79:             f"that you have disk space free."
+  80:         ) from exc
+  81: 
+  82:     return _model, _tokenizer
+  83: 
+  84: 
+  85: def perplexity(text: str) -> float:
+  86:     """
+  87:     How surprised the model is by this text. Lower means more predictable.
+  88: 
+  89:     Returns a positive number. Typical values land roughly between 10 and 200,
+  90:     but that range shifts with topic and length, which is one reason the raw
+  91:     number isn't what you score on.
+  92:     """
+  93:     import torch
+  94: 
+  95:     model, tokenizer = _load()
+  96: 
+  97:     encoded = tokenizer(
+  98:         text,
+  99:         return_tensors="pt",
+ 100:         truncation=True,
+ 101:         max_length=config.DETECTOR_MAX_TOKENS,
+ 102:     )
+ 103:     input_ids = encoded["input_ids"]
+ 104: 
+ 105:     # Two tokens is not enough to be surprised by anything.
+ 106:     if input_ids.shape[1] < 3:
+ 107:         raise ValueError("Text is too short to score â€” a few sentences at least.")
+ 108: 
+ 109:     with torch.no_grad():
+ 110:         output = model(input_ids, labels=input_ids)
+ 111: 
+ 112:     # The model's loss here IS mean negative log-likelihood per token.
+ 113:     return float(math.exp(output.loss.item()))
+ 114: 
+ 115: 
+ 116: def model_signal(text: str) -> float:
+ 117:     """
+ 118:     The signal, as a 0â€“1 score. **Higher means more likely AI.**
+ 119: 
+ 120:     Perplexity is unbounded and roughly log-distributed, so it gets squashed
+ 121:     onto 0â€“1 rather than clipped. The midpoint below is the perplexity that
+ 122:     maps to 0.5 â€” text this surprising is a coin flip.
+ 123: 
+ 124:     You may want to move that midpoint once you've run the four calibration
+ 125:     inputs in Milestone 4 and seen what your own text actually scores. If you
+ 126:     do, say so in your README: it's a scoring decision, not a detail.
+ 127:     """
+ 128:     ppl = perplexity(text)
+ 129: 
+ 130:     midpoint = 45.0    # perplexity that scores 0.5
+ 131:     steepness = 1.6    # how sharply the score moves either side of it
+ 132: 
+ 133:     # Logistic on log-perplexity. Low perplexity -> high AI score.
+ 134:     score = 1.0 / (1.0 + (ppl / midpoint) ** steepness)
+ 135:     return round(min(max(score, 0.0), 1.0), 4)
+ 136: 
+ 137: 
+ 138: def warm_up() -> str:
+ 139:     """Load the model without scoring anything. Run this before class."""
+ 140:     _load()
+ 141:     return f"{config.DETECTOR_MODEL} loaded and ready."
+ 142: 
+ 143: 
+ 144: if __name__ == "__main__":
+ 145:     import sys
+ 146: 
+ 147:     if len(sys.argv) > 1:
+ 148:         text = " ".join(sys.argv[1:])
+ 149:     else:
+ 150:         text = (
+ 151:             "The implementation of the proposed framework requires careful "
+ 152:             "consideration of several key factors. First, it is important to "
+ 153:             "note that the system must be able to handle a wide variety of "
+ 154:             "different inputs. Additionally, the overall performance of the "
+ 155:             "solution depends on a number of important variables."
+ 156:         )
+ 157:         print("(no text given â€” scoring a sample)\n")
+ 158: 
+ 159:     print(f"Loading {config.DETECTOR_MODEL} (first run downloads ~550 MB)â€¦")
+ 160:     print(f"perplexity     {perplexity(text):.1f}")
+ 161:     print(f"model_signal   {model_signal(text):.4f}   (higher = more likely AI)")
+
+================================================================================
+FILE: stylometry.py
+================================================================================
+   1: """
+   2: Signal two: the style signal. â† YOU BUILD THIS IN MILESTONE 4
+   3: 
+   4: Signal one reads the text for meaning. This one measures it *as text* â€” the
+   5: shape of it, without understanding a word.
+   6: 
+   7: Three measures are stubbed below because the brief names those three. They are
+   8: stubs, not implementations: what they compute is yours, and so is how you
+   9: combine them.
+  10: 
+  11:     sentence_length_spread   do sentences vary in length, or march in step?
+  12:     type_token_ratio         how much of the vocabulary repeats?
+  13:     punctuation_density      how much punctuation, and how varied?
+  14: 
+  15: Why these might differ between human and AI writing: generated prose tends
+  16: toward even, mid-length sentences and a narrower band of vocabulary, because
+  17: that's what "most likely next word" produces on average. Human writing is
+  18: lumpier â€” a three-word sentence next to a forty-word one.
+  19: 
+  20: âš ï¸ **The blind spot, which you have to name in Milestone 1.**
+  21: 
+  22: This signal cannot read. It has no idea what the text says. Anything that
+  23: changes the shape without changing the substance moves it â€” adding typos,
+  24: breaking up sentences, pasting in a quotation. That is a very cheap thing for
+  25: someone to do on purpose, and unit 8's attack set will do it to you.
+  26: 
+  27: Build each function on its own and call it from a terminal before you wire
+  28: anything together:
+  29: 
+  30:     python stylometry.py "some text to look at"
+  31: """
+  32: 
+  33: import re
+  34: import statistics
+  35: 
+  36: 
+  37: def sentences(text: str) -> list[str]:
+  38:     """Split into sentences. Rough and good enough â€” given to you."""
+  39:     parts = re.split(r"(?<=[.!?])\s+", text.strip())
+  40:     return [p for p in parts if p.strip()]
+  41: 
+  42: 
+  43: def words(text: str) -> list[str]:
+  44:     """Split into lowercase words, punctuation stripped. Given to you."""
+  45:     return re.findall(r"[a-z0-9']+", text.lower())
+  46: 
+  47: 
+  48: # â”€â”€ The three measures â€” YOU BUILD THESE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  49: 
+  50: def sentence_length_spread(text: str) -> float:
+  51:     """
+  52:     How much sentence length varies. â† TODO
+  53: 
+  54:     Returns:
+  55:         A float. Decide yourself what scale it's on and which direction means
+  56:         "more human" â€” then write that down, because your combining rule
+  57:         depends on knowing it.
+  58: 
+  59:     A hint on what you're reaching for: the standard deviation of sentence
+  60:     lengths, probably divided by the mean so a long text and a short one are
+  61:     comparable. `statistics.stdev` is imported for you.
+  62: 
+  63:     Watch the edge case: a one-sentence submission has no spread at all, and
+  64:     `stdev` raises on fewer than two values. Decide what that should return
+  65:     before the attack set decides for you.
+  66:     """
+  67:     # TODO: replace this
+  68:     return 0.0
+  69: 
+  70: 
+  71: def type_token_ratio(text: str) -> float:
+  72:     """
+  73:     Unique words over total words. â† TODO
+  74: 
+  75:     Returns:
+  76:         A float between 0 and 1. Higher means more varied vocabulary.
+  77: 
+  78:     Worth knowing before you rely on it: this measure falls as text gets
+  79:     longer, because common words repeat. Two texts of different lengths aren't
+  80:     directly comparable on it, and if your test inputs vary a lot in length,
+  81:     that alone can look like a signal.
+  82:     """
+  83:     # TODO: replace this
+  84:     return 0.0
+  85: 
+  86: 
+  87: def punctuation_density(text: str) -> float:
+  88:     """
+  89:     How much punctuation, relative to length. â† TODO
+  90: 
+  91:     Returns:
+  92:         A float. Whether you count all punctuation or only some kinds â€” commas,
+  93:         semicolons, dashes â€” is a real choice. Semicolons and em dashes are
+  94:         more interesting than full stops, because they vary more between
+  95:         writers.
+  96:     """
+  97:     # TODO: replace this
+  98:     return 0.0
+  99: 
+ 100: 
+ 101: # â”€â”€ Combining them â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+ 102: 
+ 103: def style_signal(text: str) -> float:
+ 104:     """
+ 105:     The style signal as a 0â€“1 score. **Higher means more likely AI.** â† TODO
+ 106: 
+ 107:     Combine your three measures into one number. Same direction as
+ 108:     `detector.model_signal`, so that `scoring.combine_signals` can treat them
+ 109:     the same way â€” if one of your signals runs backwards, everything above it
+ 110:     is wrong in a way that's hard to see.
+ 111: 
+ 112:     Two things to decide and write down:
+ 113: 
+ 114:       1. Which direction each measure points. Low spread means more AI-ish, so
+ 115:          it needs flipping. Work out which of your three need that.
+ 116:       2. How to get each onto a comparable scale. A raw type-token ratio sits
+ 117:          between 0 and 1; a raw punctuation count doesn't. Adding them
+ 118:          unscaled means whichever has the bigger numbers wins by default.
+ 119: 
+ 120:     Test it on the four calibration inputs from Milestone 4 â€” clearly AI,
+ 121:     clearly human, plain conventional human writing, lightly-edited AI â€” before
+ 122:     you trust it. Plain and ordinary, not formal: formal prose reads as *human*
+ 123:     to signal one, and it is plain writing that gets accused.
+ 124:     """
+ 125:     # TODO: replace this
+ 126:     return 0.5
+ 127: 
+ 128: 
+ 129: if __name__ == "__main__":
+ 130:     import sys
+ 131: 
+ 132:     text = " ".join(sys.argv[1:]) or (
+ 133:         "The system works well. It handles most cases correctly and provides "
+ 134:         "good results. Users generally find it easy to use and understand."
+ 135:     )
+ 136: 
+ 137:     print(f"{len(sentences(text))} sentences, {len(words(text))} words\n")
+ 138:     print(f"sentence_length_spread   {sentence_length_spread(text)}")
+ 139:     print(f"type_token_ratio         {type_token_ratio(text)}")
+ 140:     print(f"punctuation_density      {punctuation_density(text)}")
+ 141:     print(f"style_signal             {style_signal(text)}   (higher = more likely AI)")
+ 142:     print("\nAll zeros? These are stubs â€” Milestone 4 is where you build them.")
+
+================================================================================
+FILE: scoring.py
+================================================================================
+   1: """
+   2: Turning two numbers into one, and one number into something a person can read.
+   3: â† YOU BUILD THIS IN MILESTONES 4 AND 5
+   4: 
+   5: Two functions live here, and both are stubs.
+   6: 
+   7: `combine_signals` is where your false-positive decision from Milestone 1
+   8: actually gets made. Everything above it â€” the labels, the appeal path â€” is
+   9: downstream of a number this function produced.
+  10: 
+  11: `score_to_label` is where you stop writing for a machine and start writing for
+  12: a person. A score of 0.62 means nothing to a writer.
+  13: 
+  14: âš ï¸ Your README's **Signals and Scoring** section has to name the file and
+  15: function holding your combining rule. The grader checks your code against what
+  16: you claim, so that line should read `scoring.py::combine_signals`.
+  17: """
+  18: 
+  19: import config
+  20: 
+  21: 
+  22: def combine_signals(model_score: float, style_score: float) -> float:
+  23:     """
+  24:     Combine two 0â€“1 signals into one 0â€“1 score. â† TODO (Milestone 4)
+  25: 
+  26:     Both inputs point the same way: higher means more likely AI. Your output
+  27:     should too.
+  28: 
+  29:     Args:
+  30:         model_score: from `detector.model_signal` â€” how predictable the text is.
+  31:         style_score: from `stylometry.style_signal` â€” the shape of the text.
+  32: 
+  33:     Returns:
+  34:         A float from 0.0 (confidently human) to 1.0 (confidently AI).
+  35: 
+  36:     âš ï¸ **Write the rule down before you code it, and put the numbers in your
+  37:     README.** A weighted average is the obvious choice and it is not the only
+  38:     one. Things worth thinking about:
+  39: 
+  40:       - **What happens when they disagree?** One signal at 0.9 and the other at
+  41:         0.1 averages to 0.5 â€” "unsure". Is that what you want? It might be
+  42:         exactly right: two methods disagreeing IS uncertainty. Or you might
+  43:         decide one signal is more trustworthy when they split.
+  44: 
+  45:       - **Which way do you want to be wrong?** Weighting toward the signal that
+  46:         reads more human means fewer false accusations and more AI text
+  47:         getting through. There's no weighting that avoids the trade.
+  48: 
+  49:       - Milestone 4 asks you to find a case where your two signals split and
+  50:         write it down. That case is what this rule exists to handle.
+  51: 
+  52:     The weights in config.py are placeholders. Change them, or ignore them and
+  53:     write a different rule.
+  54:     """
+  55:     # TODO: replace this
+  56:     return (
+  57:         config.WEIGHT_MODEL_SIGNAL * model_score
+  58:         + config.WEIGHT_STYLE_SIGNAL * style_score
+  59:     )
+  60: 
+  61: 
+  62: def score_to_label(score: float) -> tuple[str, str]:
+  63:     """
+  64:     Turn a score into a guess and the text a reader actually sees.
+  65:     â† TODO (Milestone 5)
+  66: 
+  67:     Returns:
+  68:         (guess, label_text) â€” where `guess` is a short machine-readable string
+  69:         like "ai" / "human" / "unsure", and `label_text` is the full sentence
+  70:         shown to a person.
+  71: 
+  72:     âš ï¸ Write the label text for someone who has never heard the word
+  73:     "threshold".
+  74: 
+  75:         âœ— "human, 0.81 confidence"
+  76:         âœ“ "We think this was probably written by a person."
+  77: 
+  78:     All three labels have to be **reachable**. If no score can produce one of
+  79:     them, your ranges have a gap â€” and Milestone 5 asks you to submit text that
+  80:     produces each one, which is how you'd find out.
+  81: 
+  82:     The hardest one to write is "unsure". It has to admit uncertainty without
+  83:     sounding like an accusation, because the person reading it may well have
+  84:     written every word themselves. Your breakout asks your group what they'd
+  85:     think if they got it on their own work. That question is the whole
+  86:     milestone.
+  87:     """
+  88:     # TODO: replace this â€” thresholds are in config.py
+  89:     if score >= config.AI_THRESHOLD:
+  90:         return "ai", "PLACEHOLDER â€” write the high-confidence AI label."
+  91:     if score <= config.HUMAN_THRESHOLD:
+  92:         return "human", "PLACEHOLDER â€” write the high-confidence human label."
+  93:     return "unsure", "PLACEHOLDER â€” write the unsure label."
+  94: 
+  95: 
+  96: def label_ranges() -> list[tuple[str, str]]:
+  97:     """
+  98:     The score range each label covers. Your README needs these beside the
+  99:     label text â€” given to you so the numbers can't drift apart from config.py.
+ 100:     """
+ 101:     return [
+ 102:         ("high-confidence human", f"0.00 â€“ {config.HUMAN_THRESHOLD:.2f}"),
+ 103:         ("unsure", f"{config.HUMAN_THRESHOLD:.2f} â€“ {config.AI_THRESHOLD:.2f}"),
+ 104:         ("high-confidence AI", f"{config.AI_THRESHOLD:.2f} â€“ 1.00"),
+ 105:     ]
+
+================================================================================
+FILE: config.py
+================================================================================
+   1: """
+   2: Settings for Provenance Guard.
+   3: 
+   4: Everything you're likely to change lives here, at the top, on purpose.
+   5: 
+   6: You'll edit the thresholds in Milestone 5 and the rate limits in unit 8.
+   7: """
+   8: 
+   9: import os
+  10: from pathlib import Path
+  11: 
+  12: ROOT = Path(__file__).parent
+  13: 
+  14: 
+  15: # â”€â”€â”€ The service â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  16: 
+  17: # `127.0.0.1` is loopback â€” only your own machine can reach it, which is what
+  18: # you want all through units 7 and 8. A host somewhere else has to accept
+  19: # traffic from outside the box, and that means `0.0.0.0`. Setting the env var
+  20: # is how you get it; the default keeps your local `curl` commands unchanged.
+  21: HOST = os.getenv("HOST", "127.0.0.1")
+  22: PORT = int(os.getenv("PORT", "5000"))
+  23: 
+  24: # Flask's debug mode gives anyone who can reach the service an interactive
+  25: # Python prompt inside your process. Fine on loopback, a gift to strangers
+  26: # anywhere else â€” so it turns itself off the moment HOST isn't loopback.
+  27: DEBUG = os.getenv("AI201_DEBUG", "1") == "1" and HOST in ("127.0.0.1", "localhost")
+  28: 
+  29: 
+  30: # â”€â”€â”€ The local model â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  31: # Your first signal runs a language model ON YOUR OWN MACHINE. No account, no
+  32: # key, no card. It downloads about 550 MB the first time â€” do that before
+  33: # class, not during it.
+  34: #
+  35: # What it measures: how *predictable* your text is to a language model. Text a
+  36: # model finds easy to predict tends to be text a model wrote.
+  37: #
+  38: # The first call is the slow one â€” ten to twenty seconds while the model loads,
+  39: # longer on an older laptop. After that it stays in memory and a submission
+  40: # takes a second or two. That cost is part of what you're learning: this is
+  41: # what running a model inline in a request actually looks like.
+  42: 
+  43: DETECTOR_MODEL = os.getenv("AI201_DETECTOR_MODEL", "gpt2")
+  44: 
+  45: # Longer text gives a steadier reading but takes longer. 400 tokens is roughly
+  46: # 300 words, which is enough for the signal to mean something.
+  47: DETECTOR_MAX_TOKENS = 400
+  48: 
+  49: 
+  50: # â”€â”€â”€ Scoring (Milestone 4) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  51: # How much each signal counts toward the combined score.
+  52: #
+  53: # âš ï¸ These are placeholders. Milestone 4 asks you to write your combining rule
+  54: # down BEFORE you code it, and to put the numbers in your README. Whatever you
+  55: # decide, it goes here.
+  56: 
+  57: WEIGHT_MODEL_SIGNAL = 0.5
+  58: WEIGHT_STYLE_SIGNAL = 0.5
+  59: 
+  60: 
+  61: # â”€â”€â”€ Thresholds (Milestone 5) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  62: # Where one label becomes another. Scores run 0.0 (confidently human) to 1.0
+  63: # (confidently AI).
+  64: #
+  65: #   score < HUMAN_THRESHOLD          -> high-confidence human
+  66: #   between the two                  -> unsure
+  67: #   score > AI_THRESHOLD             -> high-confidence AI
+  68: #
+  69: # âš ï¸ This is where your false-positive decision from Milestone 1 actually gets
+  70: # made. Widening the unsure band means fewer wrong accusations and more AI text
+  71: # getting through. There is no setting that avoids the trade â€” only settings
+  72: # that decide who pays for it.
+  73: 
+  74: HUMAN_THRESHOLD = 0.35
+  75: AI_THRESHOLD = 0.65
+  76: 
+  77: # âš ï¸ One thing that catches people out in Milestone 5. A weighted average can
+  78: # only land between its two inputs â€” so while `style_signal` is still the stub
+  79: # returning 0.5, the combined score can never leave 0.25â€“0.75 no matter what
+  80: # the model signal says, and the human label needs a model score below 0.20 to
+  81: # be reachable at all.
+  82: #
+  83: # If a label you can't reach is the problem, the fix is upstream of the
+  84: # thresholds: a style signal that actually varies. `scoring.label_ranges()`
+  85: # prints the bands; the reachable range is a different question.
+  86: 
+  87: 
+  88: # â”€â”€â”€ Rate limiting (UNIT 8) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  89: # Off in unit 7. You turn it on and choose the numbers in unit 8, Milestone 1.
+  90: #
+  91: # Think about two people: a real writer submitting their own work a few times
+  92: # an hour, and a script sending a thousand variations to map your thresholds.
+  93: # Your README has to say why your numbers and not others.
+  94: 
+  95: RATE_LIMITING_ENABLED = os.getenv("AI201_RATE_LIMITS", "0") == "1"
+  96: 
+  97: RATE_LIMIT_PER_MINUTE = 10
+  98: RATE_LIMIT_PER_DAY = 200
+  99: 
+ 100: # Flask-Limiter warns loudly without this. In-memory is right for one laptop
+ 101: # and wrong for anything real â€” a restart forgets every count, and two copies
+ 102: # of the service wouldn't share limits.
+ 103: RATE_LIMIT_STORAGE = "memory://"
+ 104: 
+ 105: 
+ 106: # â”€â”€â”€ Paths â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+ 107: 
+ 108: LOG_DIR = ROOT / "logs"
+ 109: AUDIT_LOG = LOG_DIR / "audit.jsonl"
+ 110: RESULTS_DIR = ROOT / "results"
+
+================================================================================
+FILE: audit.py
+================================================================================
+   1: """
+   2: The audit log.
+   3: 
+   4: Every decision your service makes gets written here as one JSON object per
+   5: line. Not `print()` â€” a file you can read back.
+   6: 
+   7: The reason is next unit: you run an attack against this service, and **an
+   8: attack you can't see in a log is an attack you can't diagnose.** An input that
+   9: slipped past your detector leaves no other trace.
+  10: 
+  11: All nine fields the unit 8 rubric requires are in the entry shape from the
+  12: start, even though unit 7 only fills some of them. That's deliberate â€” adding
+  13: fields later means your early entries and your late ones have different shapes,
+  14: and the one you most want to compare is the one from before the change.
+  15: 
+  16:     from audit import log_decision, read_entries
+  17: 
+  18:     log_decision(content_id=..., creator_id=..., guess="ai", ...)
+  19:     entries = read_entries(limit=50)
+  20: """
+  21: 
+  22: import json
+  23: import threading
+  24: from datetime import datetime, timezone
+  25: 
+  26: import config
+  27: 
+  28: _lock = threading.Lock()
+  29: 
+  30: 
+  31: def _now() -> str:
+  32:     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+  33: 
+  34: 
+  35: def log_decision(
+  36:     content_id: str,
+  37:     creator_id: str,
+  38:     guess: str | None = None,
+  39:     model_score: float | None = None,
+  40:     style_score: float | None = None,
+  41:     combined_score: float | None = None,
+  42:     label: str | None = None,
+  43:     status: str = "decided",
+  44:     **extra,
+  45: ) -> dict:
+  46:     """
+  47:     Write one decision to the audit log.
+  48: 
+  49:     The nine required fields, all present from unit 7 whether or not you can
+  50:     fill them yet:
+  51: 
+  52:         timestamp, content_id, creator_id, guess,
+  53:         model_score, style_score, combined_score, label, status
+  54: 
+  55:     `status` moves over an item's life: `decided` when first judged,
+  56:     `under_review` once the writer appeals.
+  57: 
+  58:     Anything extra you pass gets written too â€” useful for `rejected` entries in
+  59:     unit 8, where there's no decision but you still want the trace.
+  60:     """
+  61:     entry = {
+  62:         "timestamp": _now(),
+  63:         "content_id": content_id,
+  64:         "creator_id": creator_id,
+  65:         "guess": guess,
+  66:         "model_score": model_score,
+  67:         "style_score": style_score,
+  68:         "combined_score": combined_score,
+  69:         "label": label,
+  70:         "status": status,
+  71:     }
+  72:     entry.update(extra)
+  73:     return _append(entry)
+  74: 
+  75: 
+  76: def log_appeal(content_id: str, creator_id: str, reasoning: str) -> dict:
+  77:     """
+  78:     Record an appeal beside the original decision.
+  79: 
+  80:     This doesn't overwrite anything. The log is append-only, so the original
+  81:     decision stays exactly where it was and the appeal sits after it â€” which is
+  82:     the whole point of an audit log. Someone reading it later can see what was
+  83:     decided, that it was challenged, and in what order.
+  84:     """
+  85:     return _append({
+  86:         "timestamp": _now(),
+  87:         "content_id": content_id,
+  88:         "creator_id": creator_id,
+  89:         "event": "appeal",
+  90:         "status": "under_review",
+  91:         "reasoning": reasoning,
+  92:     })
+  93: 
+  94: 
+  95: def log_rejection(creator_id: str, reason: str, **extra) -> dict:
+  96:     """
+  97:     Record a request that never became a decision â€” a rate-limit rejection or
+  98:     an input your route refused.
+  99: 
+ 100:     âš ï¸ Unit 8 asks for this explicitly, and the reason is worth holding onto:
+ 101:     **an attack that shows up only as an absence is one you'll never find.** A
+ 102:     thousand requests that got a 429 and left no trace look exactly like a
+ 103:     quiet afternoon.
+ 104:     """
+ 105:     return _append({
+ 106:         "timestamp": _now(),
+ 107:         "creator_id": creator_id,
+ 108:         "event": "rejected",
+ 109:         "status": "rejected",
+ 110:         "reason": reason,
+ 111:         **extra,
+ 112:     })
+ 113: 
+ 114: 
+ 115: def _append(entry: dict) -> dict:
+ 116:     config.LOG_DIR.mkdir(parents=True, exist_ok=True)
+ 117:     line = json.dumps(entry, ensure_ascii=False)
+ 118:     with _lock:
+ 119:         with config.AUDIT_LOG.open("a", encoding="utf-8") as f:
+ 120:             f.write(line + "\n")
+ 121:     return entry
+ 122: 
+ 123: 
+ 124: def read_entries(limit: int | None = None) -> list[dict]:
+ 125:     """
+ 126:     Read the log back, oldest first. `limit` keeps the most recent N.
+ 127: 
+ 128:     A malformed line is skipped rather than raising â€” a log that can't be read
+ 129:     because of one bad row is worse than a log with a gap.
+ 130:     """
+ 131:     if not config.AUDIT_LOG.exists():
+ 132:         return []
+ 133: 
+ 134:     entries = []
+ 135:     for line in config.AUDIT_LOG.read_text(encoding="utf-8").splitlines():
+ 136:         line = line.strip()
+ 137:         if not line:
+ 138:             continue
+ 139:         try:
+ 140:             entries.append(json.loads(line))
+ 141:         except json.JSONDecodeError:
+ 142:             continue
+ 143: 
+ 144:     return entries[-limit:] if limit else entries
+ 145: 
+ 146: 
+ 147: def clear() -> int:
+ 148:     """Wipe the log. Handy between attack runs; returns how many went."""
+ 149:     count = len(read_entries())
+ 150:     if config.AUDIT_LOG.exists():
+ 151:         config.AUDIT_LOG.unlink()
+ 152:     return count
+ 153: 
+ 154: 
+ 155: def entries_for(content_id: str) -> list[dict]:
+ 156:     """Every entry touching one content id, in order."""
+ 157:     return [e for e in read_entries() if e.get("content_id") == content_id]
+
+================================================================================
+FILE: criteria.md
+================================================================================
+   1: # Acceptance criteria â€” Provenance Guard
+   2: 
+   3: Five criteria that say what "working" means for this service, written in unit 7
+   4: **before** you built it.
+   5: 
+   6: **All five are yours.** None are given.
+   7: 
+   8: An acceptance criterion names a number or something plainly observable. *"The
+   9: detector is accurate"* is an opinion â€” and perfect AI detection isn't possible
+  10: anyway, so it's an opinion about something nobody can deliver. *"Of 10 pieces I
+  11: wrote myself, at most 1 is labelled high-confidence AI"* is a criterion.
+  12: 
+  13: Under each, write a sentence or two on **why that target**. *"I allow at most 1
+  14: false positive in 10 because on a writing site a wrong accusation costs more
+  15: than a missed detection"* is a real answer.
+  16: 
+  17: > Missing your own targets next unit costs you nothing. Setting a target so
+  18: > easy you can't miss it does.
+  19: 
+  20: ---
+  21: 
+  22: ## Pick numbers you can defend
+  23: 
+  24: **Cover at least three of these five areas.** They're prompts, not a form.
+  25: 
+  26: | Area | A question it could answer |
+  27: |---|---|
+  28: | False positives | How often may a human's writing get called AI? |
+  29: | Score spread | How far apart should clearly-AI and clearly-human text score? |
+  30: | Label coverage | Is every one of your three labels actually reachable? |
+  31: | The appeal path | Does an appeal always change status and always get recorded? |
+  32: | Bad input | What happens when `text` is missing, empty, or enormous? |
+  33: 
+  34: Two things worth knowing before you pick numbers:
+  35: 
+  36: - **The expensive mistake is one-sided.** Missing some AI text costs the site a
+  37:   little. Accusing a real writer costs that person a lot. A criterion that
+  38:   treats both errors as equally bad is describing a system nobody would ship.
+  39: - **Unit 8 tests across three trials, and the target has to hold across all
+  40:   three.** Your first signal runs a model, so identical input can score
+  41:   differently twice. A target of "at most 1 in 10" against trials of 2, 1, 2 is
+  42:   a **miss**.
+  43: 
+  44: ---
+  45: ## 1.
+  46: 
+  47: <!-- Your criterion. It must name a number. -->
+  48: 
+  49: 
+  50: 
+  51: **Why this target:**
+  52: 
+  53: 
+  54: 
+  55: ---
+  56: 
+  57: ## 2.
+  58: 
+  59: <!-- Your criterion. -->
+  60: 
+  61: 
+  62: 
+  63: **Why this target:**
+  64: 
+  65: 
+  66: 
+  67: ---
+  68: 
+  69: ## 3.
+  70: 
+  71: <!-- Your criterion. -->
+  72: 
+  73: 
+  74: 
+  75: **Why this target:**
+  76: 
+  77: 
+  78: 
+  79: ---
+  80: 
+  81: ## 4.
+  82: 
+  83: <!-- Your criterion. -->
+  84: 
+  85: 
+  86: 
+  87: **Why this target:**
+  88: 
+  89: 
+  90: 
+  91: ---
+  92: 
+  93: ## 5.
+  94: 
+  95: <!-- Your criterion. -->
+  96: 
+  97: 
+  98: 
+  99: **Why this target:**
+ 100: 
+ 101: 
+ 102: 
+ 103: ---
+ 104: 
+ 105: <!-- â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+ 106:      UNIT 8 â€” read this before you change anything above.
+ 107: 
+ 108:      If a criterion turns out to be BROKEN rather than merely unmet, you can
+ 109:      revise it, and that earns credit. But never delete or edit the original
+ 110:      line. Add the revision underneath, like this:
+ 111: 
+ 112:          ## 2. Uncertain cases land in the unsure band
+ 113: 
+ 114:          The system handles uncertain cases well.
+ 115: 
+ 116:          **Why this target:** ...
+ 117: 
+ 118:          > **Revised in unit 8:** Text I judged borderline scores between
+ 119:          > 0.4 and 0.6 in at least 4 of 5 cases.
+ 120:          >
+ 121:          > **Why revised:** "well" gave me nothing to check. I couldn't
+ 122:          > reach a verdict from it at all.
+ 123: 
+ 124:      That's a revision because the criterion couldn't be MEASURED.
+ 125: 
+ 126:      Lowering a target because you missed it is not a revision, and it costs
+ 127:      you the point:
+ 128: 
+ 129:          âœ— "At most 1 of 10 of my own pieces flagged as AI" â†’ "at most 3
+ 130:             of 10", because 1 of 10 turned out to be hard.
+ 131: 
+ 132:      A number you missed stays where it is, gets diagnosed, and gets a fix
+ 133:      attempted. That's where the points are.
+ 134:      â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ -->
+
+================================================================================
+FILE: README.md
+================================================================================
+   1: # Provenance Guard
+   2: 
+   3: > ### ðŸ‘‹ Start here
+   4: >
+   5: > **New to this repo? Read [RUNNING.md](RUNNING.md) first.**
+   6: >
+   7: > Once `python test.py` passes, in one terminal:
+   8: >
+   9: > ```bash
+  10: > python app.py
+  11: > ```
+  12: >
+  13: > and in another:
+  14: >
+  15: > ```bash
+  16: > curl -X POST http://127.0.0.1:5000/ping \
+  17: >   -H "Content-Type: application/json" \
+  18: >   -d '{"message": "hello"}'
+  19: > ```
+  20: >
+  21: > That's a web service. Something sent it text and it sent something back.
+  22: > Everything this unit is filling in the middle.
+  23: >
+  24: > **The rest of this file is your submission.** Fill it in as you go.
+  25: 
+  26: ---
+  27: 
+  28: <!-- â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  29:      Unit 7 asks for the first five sections. Unit 8 adds the five below.
+  30: 
+  31:      Everything is pasted as TEXT. A pasted curl response gets full credit;
+  32:      a picture of your terminal gets none.
+  33:      â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ -->
+  34: 
+  35: <!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• UNIT 7 â€” THE BUILD â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
+  36: 
+  37: ## What This Does
+  38: 
+  39: <!-- The path a submission takes, from arriving to the label a reader sees.
+  40:      Six or seven steps â€” this is the trace you wrote in Milestone 1. -->
+  41: 
+  42: 
+  43: 
+  44: ---
+  45: 
+  46: ## Signals and Scoring
+  47: 
+  48: <!-- For each signal: what property it measures, why that might differ between
+  49:      human and AI writing, and WHAT IT CAN'T SEE.
+  50: 
+  51:      The blind spot is not optional. If you can't name it you don't understand
+  52:      the signal yet â€” and unit 8's attack set is built out of blind spots. -->
+  53: 
+  54: ### Signal one â€” the model signal
+  55: 
+  56: **What it measures:**
+  57: 
+  58: **Why that might differ between human and AI writing:**
+  59: 
+  60: **What it can't see:**
+  61: 
+  62: ### Signal two â€” the style signal
+  63: 
+  64: **What it measures:**
+  65: 
+  66: **Why that might differ between human and AI writing:**
+  67: 
+  68: **What it can't see:**
+  69: 
+  70: ### The combining rule
+  71: 
+  72: <!-- Write the rule in words, then give the numbers. What happens when the two
+  73:      signals disagree? -->
+  74: 
+  75: **The rule:**
+  76: 
+  77: **The numbers:**
+  78: 
+  79: **Where it lives:** `scoring.py::combine_signals`
+  80: 
+  81: <!-- âš ï¸ The grader checks your code against that line. If your rule lives
+  82:      somewhere else, say where. -->
+  83: 
+  84: **A case where my two signals split, and what my rule does with it:**
+  85: 
+  86: 
+  87: 
+  88: ---
+  89: 
+  90: ## Label Variants
+  91: 
+  92: <!-- The exact text of all three labels, as a reader would see them, and the
+  93:      score range each covers.
+  94: 
+  95:      Write them for someone who has never heard the word "threshold". -->
+  96: 
+  97: | Label | Score range | The exact text a reader sees |
+  98: |---|---|---|
+  99: | high-confidence human |  |  |
+ 100: | unsure |  |  |
+ 101: | high-confidence AI |  |  |
+ 102: 
+ 103: **Why I worded the "unsure" one this way:**
+ 104: <!-- It's the hardest of the three. It has to admit uncertainty without
+ 105:      sounding like an accusation, because the person reading it may well have
+ 106:      written every word themselves. -->
+ 107: 
+ 108: 
+ 109: 
+ 110: ---
+ 111: 
+ 112: ## Sample Run
+ 113: 
+ 114: <!-- One submission and one appeal, pasted as text: the request, the response,
+ 115:      and the log entries. -->
+ 116: 
+ 117: **A submission**
+ 118: 
+ 119: <!-- The response needs content_id, guess, confidence, label, AND both
+ 120:      signal scores - model_score and style_score. Unit 8's tools read those
+ 121:      two off the response, so leaving them out costs you next unit's
+ 122:      diagnostics. -->
+ 123: 
+ 124: ```bash
+ 125: $ curl -X POST http://127.0.0.1:5000/submit \
+ 126:   -H "Content-Type: application/json" \
+ 127:   -d '{"text": "...", "creator_id": "..."}'
+ 128: ```
+ 129: 
+ 130: ```json
+ 131: 
+ 132: ```
+ 133: 
+ 134: **An appeal**
+ 135: 
+ 136: ```bash
+ 137: $ curl -X POST http://127.0.0.1:5000/appeal \
+ 138:   -H "Content-Type: application/json" \
+ 139:   -d '{"content_id": "...", "reasoning": "..."}'
+ 140: ```
+ 141: 
+ 142: ```json
+ 143: 
+ 144: ```
+ 145: 
+ 146: **What the log shows afterwards**
+ 147: 
+ 148: ```bash
+ 149: $ curl "http://127.0.0.1:5000/log?limit=3"
+ 150: ```
+ 151: 
+ 152: ```json
+ 153: 
+ 154: ```
+ 155: 
+ 156: ---
+ 157: 
+ 158: ## How I Used AI
+ 159: 
+ 160: **Moment 1**
+ 161: 
+ 162: - *What I asked for:*
+ 163: - *What came back:*
+ 164: - *What I changed:*
+ 165: 
+ 166: **Moment 2**
+ 167: 
+ 168: - *What I asked for:*
+ 169: - *What came back:*
+ 170: - *What I changed:*
+ 171: 
+ 172: <!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• UNIT 8 â€” THE TEST â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
+ 173: 
+ 174: ---
+ 175: 
+ 176: ## Rate Limiting
+ 177: 
+ 178: **My limits:** ___ per minute, ___ per day
+ 179: 
+ 180: **Why those numbers and not others:**
+ 181: <!-- Think about two people: a real writer submitting their own work a few
+ 182:      times an hour, and a script sending a thousand variations to map your
+ 183:      thresholds. Your numbers have to be liveable for the first and hostile to
+ 184:      the second. -->
+ 185: 
+ 186: **What a caller counts as:** <!-- per address, or per creator_id? They fail
+ 187: differently â€” one script can look like a thousand callers, and one household
+ 188: can look like one. -->
+ 189: 
+ 190: **The run of status codes when I pushed past it:**
+ 191: 
+ 192: <!-- python run_attacks.py --flood 15 -->
+ 193: 
+ 194: ```
+ 195: 
+ 196: ```
+ 197: 
+ 198: ---
+ 199: 
+ 200: ## Attack Run â€” Before
+ 201: 
+ 202: <!-- Every attack with its outcome and a held-or-broke mark.
+ 203:      `run_attacks.py --label before` produces the table. -->
+ 204: 
+ 205: 
+ 206: 
+ 207: **Ten audit log entries from the run**
+ 208: 
+ 209: <!-- Choose entries that show the interesting failures, not the ten easiest. -->
+ 210: 
+ 211: ```json
+ 212: 
+ 213: ```
+ 214: 
+ 215: **The single worst outcome** â€” the one I'd least want to explain to a writer
+ 216: whose work got caught by it:
+ 217: 
+ 218: 
+ 219: 
+ 220: ---
+ 221: 
+ 222: ## Run Log and Verdicts
+ 223: 
+ 224: <!-- Your five criteria across three trials. `run_eval.py --label before`. -->
+ 225: 
+ 226: | Criterion | Target | Run 1 | Run 2 | Run 3 | Verdict |
+ 227: |---|---|---|---|---|---|
+ 228: | 1.  |  |  |  |  |  |
+ 229: | 2.  |  |  |  |  |  |
+ 230: | 3.  |  |  |  |  |  |
+ 231: | 4.  |  |  |  |  |  |
+ 232: | 5.  |  |  |  |  |  |
+ 233: 
+ 234: **Real output from one trial**, pasted as text, naming the file and function
+ 235: that produced it:
+ 236: 
+ 237: ```json
+ 238: 
+ 239: ```
+ 240: 
+ 241: **Diagnoses**
+ 242: 
+ 243: <!-- For each miss AND each broken attack: the stage and the mechanism.
+ 244: 
+ 245:      Your service has five stages: the route, signal one, signal two, the
+ 246:      combining rule, and the label mapping.
+ 247: 
+ 248:      Not a diagnosis:  "The evasion attacks got through."
+ 249:      A diagnosis:      "Four evasion inputs got through. All four had typos
+ 250:                         added to AI-generated text. My second signal measures
+ 251:                         word variety, and typos raise word variety â€” so it read
+ 252:                         them as more human. My combining rule weights that
+ 253:                         signal at 0.6, so it dragged the whole score down."
+ 254: 
+ 255:      Look for a pattern. Five failures on one signal is one problem, not five. -->
+ 256: 
+ 257: 
+ 258: 
+ 259: ---
+ 260: 
+ 261: ## The Improvement
+ 262: 
+ 263: **What I changed:**
+ 264: 
+ 265: **Which diagnosis pointed at it:**
+ 266: 
+ 267: ### Attack Run â€” After
+ 268: 
+ 269: <!-- Same format. `run_attacks.py --label after` -->
+ 270: 
+ 271: 
+ 272: 
+ 273: **Did it help, and how do I know:**
+ 274: 
+ 275: <!-- Widening the unsure band usually fixes one problem and creates another.
+ 276:      Reporting that trade honestly is worth full credit. -->
+ 277: 
+ 278: 
+ 279: 
+ 280: ---
+ 281: 
+ 282: ## What's Still Broken
+ 283: 
+ 284: <!-- For each attack still getting through and each criterion still missed:
+ 285:      what you'd do, and why you stopped. -->
+ 286: 
+ 287: 
+ 288: 
+ 289: **The trade I'd make if this ran for real:**
+ 290: 
+ 291: <!-- Two sentences. Fewer wrong accusations means more AI text getting through.
+ 292:      Say which way you'd go and WHO PAYS FOR IT. -->
+ 293: 
+ 294: 
+ 295: 
+ 296: <!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+ 297: 
+ 298:      SUBMISSION CHECKLIST â€” unit 7
+ 299: 
+ 300:        [ ] criteria.md has five numbered criteria, each naming a target
+ 301:        [ ] Each has a reason underneath
+ 302:        [ ] POST /submit returns content_id, guess, confidence, label,
+ 303:            model_score and style_score
+ 304:        [ ] Two signals that measure DIFFERENT things, each with a named blind spot
+ 305:        [ ] Three label variants, all reachable, written out in full
+ 306:        [ ] POST /appeal changes status and writes to the log
+ 307:        [ ] Signals and Scoring names scoring.py::combine_signals
+ 308:        [ ] Sample Run: a submission AND an appeal, as pasted text
+ 309:        [ ] At least four new commits
+ 310:        [ ] Repository URL submitted â€” WRITE IT DOWN
+ 311: 
+ 312:      SUBMISSION CHECKLIST â€” unit 8
+ 313: 
+ 314:        [ ] Rate limiting on /submit, with your numbers justified
+ 315:        [ ] The pasted run of status codes showing 429
+ 316:        [ ] Audit log with all nine fields, recording rejections too
+ 317:        [ ] The attack set run IN FULL, every input with an outcome
+ 318:        [ ] Ten audit log entries pasted as text
+ 319:        [ ] Five criteria across three trials
+ 320:        [ ] A diagnosis for every miss and every broken attack â€” stage AND mechanism
+ 321:        [ ] One improvement, with Attack Run â€” After
+ 322:        [ ] What's Still Broken, including the production trade
+ 323:        [ ] At least four new commits
+ 324:        [ ] The SAME repository URL as last unit
+ 325: 
+ 326:      Do not delete and recreate this repository.
+ 327:      â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
+ 328: 
+ 329: ---
+ 330: 
+ 331: ðŸ“– **How to run this project: [RUNNING.md](RUNNING.md)**
+
+================================================================================
+FILE: RUNNING.md
+================================================================================
+   1: # Running Provenance Guard
+   2: 
+   3: Everything about how the starter works.
+   4: 
+   5: This is a **web service**. It runs on your machine and you talk to it with
+   6: `curl` from another terminal. If you've not built a backend before, that's
+   7: assumed â€” the starter ships one that already answers.
+   8: 
+   9: ---
+  10: 
+  11: ## Before your first class
+  12: 
+  13: ```bash
+  14: python3 -m venv .venv
+  15: source .venv/bin/activate          # Windows: .venv\Scripts\Activate.ps1
+  16: pip install -r requirements.txt
+  17: python test.py
+  18: ```
+  19: 
+  20: **You're ready when `python test.py` passes.**
+  21: 
+  22: You'll see `[WARN] Detector model â€” not downloaded yet`:
+  23: 
+  24: ```bash
+  25: python detector.py
+  26: ```
+  27: 
+  28: That downloads about 550 MB and scores a sample.
+  29: 
+  30: > **No API key for this pair.** Nothing here calls a hosted service. The model
+  31: > that reads your text runs on your own laptop.
+  32: 
+  33: ---
+  34: 
+  35: ## Your first five minutes
+  36: 
+  37: Two terminals. In the first:
+  38: 
+  39: ```bash
+  40: python app.py
+  41: ```
+  42: 
+  43: In the second:
+  44: 
+  45: ```bash
+  46: curl -X POST http://127.0.0.1:5000/ping \
+  47:   -H "Content-Type: application/json" \
+  48:   -d '{"message": "hello"}'
+  49: ```
+  50: 
+  51: You should get JSON back. That's the whole idea of a web service â€” something
+  52: sent it data, it sent something back.
+  53: 
+  54: > **On Windows, use `curl.exe` and keep it on one line.**
+  55: >
+  56: > In PowerShell, `curl` is an alias for a different tool and the command above
+  57: > fails with `Cannot bind parameter 'Headers'` before it ever reaches your
+  58: > service. The `\` line breaks don't work there either. This does:
+  59: >
+  60: > ```powershell
+  61: > curl.exe -X POST http://127.0.0.1:5000/ping -H "Content-Type: application/json" -d '{\"message\": \"hello\"}'
+  62: > ```
+  63: >
+  64: > Every `curl` command in this file and in the brief works the same way: swap
+  65: > `curl` for `curl.exe` and put it on one line. Git Bash needs no change.
+  66: 
+  67: **Leave `/ping` alone.** It's your control. When something breaks later, check
+  68: `/ping` still answers: if it does, the problem is in your handler; if it
+  69: doesn't, it's the service itself, and that's a help-channel question.
+  70: 
+  71: Then try the route you're going to build:
+  72: 
+  73: ```bash
+  74: curl -X POST http://127.0.0.1:5000/submit \
+  75:   -H "Content-Type: application/json" \
+  76:   -d '{"text": "some writing", "creator_id": "me"}'
+  77: ```
+  78: 
+  79: It returns a `501` saying it isn't built yet. **That's the correct starting
+  80: position.**
+  81: 
+  82: ---
+  83: 
+  84: ## The routes
+  85: 
+  86: | Route | State | What it does |
+  87: |---|---|---|
+  88: | `POST /ping` | **works** | The example. Don't edit it |
+  89: | `GET /health` | **works** | Is the service up, is the model loaded |
+  90: | `GET /log` | **works** | The audit log, as JSON |
+  91: | `POST /submit` | **you build it** | Milestones 3, 4, 5 |
+  92: | `POST /appeal` | **you build it** | Milestone 5 |
+  93: 
+  94: ---
+  95: 
+  96: ## Every command
+  97: 
+  98: | Command | What it does |
+  99: |---|---|
+ 100: | `python test.py` | Checks your environment |
+ 101: | `python app.py` | Runs the service |
+ 102: | `python detector.py` | Downloads the model and scores a sample â€” **run before class** |
+ 103: | `python detector.py "some text"` | Score one piece of text from the terminal |
+ 104: | `python stylometry.py "some text"` | Your style measures, on one piece of text |
+ 105: | `python run_attacks.py --set <folder>` | The attack set â€” **unit 8** |
+ 106: | `python run_attacks.py --flood 15` | Push past your rate limit and print the status codes â€” **unit 8** |
+ 107: | `python run_eval.py --label before` | Your five criteria, three trials â€” **unit 8** |
+ 108: 
+ 109: ---
+ 110: 
+ 111: ## Which piece goes with which milestone
+ 112: 
+ 113: ### Unit 7 â€” the build
+ 114: 
+ 115: | Milestone | What you're doing | Where |
+ 116: |---|---|---|
+ 117: | 1 | Trace a submission on paper | Nothing to run |
+ 118: | 2 | Write your criteria | `criteria.md` â€” all five are yours |
+ 119: | 3 | The route, one signal, the log | `app.py::submit`, `detector.py`, `audit.py` |
+ 120: | 4 | Second signal, combine, score | `stylometry.py`, `scoring.py::combine_signals` |
+ 121: | 5 | Labels and the appeal path | `scoring.py::score_to_label`, `app.py::appeal` |
+ 122: | 6 | Write it up | `README.md` |
+ 123: 
+ 124: ### Unit 8 â€” the test
+ 125: 
+ 126: | Milestone | What you're doing | Where |
+ 127: |---|---|---|
+ 128: | 1 | Rate limiting and the full log | `config.py`, the decorator in `app.py` |
+ 129: | 2 | Run the attack set | `run_attacks.py` |
+ 130: | 3 | Run your own criteria | `scenarios.py`, `run_eval.py` |
+ 131: | 4 | Verdicts and diagnoses | `README.md` |
+ 132: | 5 | Fix one thing, re-run | `run_attacks.py --label after` |
+ 133: | 6 | What's still broken | `README.md` |
+ 134: 
+ 135: ---
+ 136: 
+ 137: ## Building `/submit` in three passes
+ 138: 
+ 139: The ordering is deliberate. It's how you tell a broken route from a broken
+ 140: signal.
+ 141: 
+ 142: **Milestone 3.** Return a hardcoded response. Confirm `curl` gets it back
+ 143: **before** you add any logic. Then pull `text` and `creator_id` out. Then call
+ 144: one signal. Then log it.
+ 145: 
+ 146: **Milestone 4.** Add the second signal. Combine them. Log both scores.
+ 147: 
+ 148: **Milestone 5.** Turn the score into a label.
+ 149: 
+ 150: > Test each signal from a terminal on its own before wiring it in. If you skip
+ 151: > that you'll spend an hour not knowing whether the route or the signal is
+ 152: > lying to you.
+ 153: 
+ 154: ---
+ 155: 
+ 156: ## Turning on rate limiting (unit 8)
+ 157: 
+ 158: Three steps:
+ 159: 
+ 160: 1. In `config.py`, set `RATE_LIMITING_ENABLED = True` â€” or run with
+ 161:    `AI201_RATE_LIMITS=1`.
+ 162: 2. Choose your numbers there.
+ 163: 3. In `app.py`, uncomment the `@limiter.limit(...)` line above `submit`.
+ 164: 
+ 165: Then push past your limit and watch for `429`:
+ 166: 
+ 167: ```bash
+ 168: python run_attacks.py --flood 15
+ 169: ```
+ 170: 
+ 171: That sends 15 submissions from one `creator_id` and prints the run of status
+ 172: codes â€” `200 200 200 ... 429 429` â€” which is exactly what your README's **Rate
+ 173: Limiting** section asks you to paste. It also writes `results/flood_<date>.md`.
+ 174: 
+ 175: The attack set can't do this for you. Every attack row submits under its own
+ 176: `creator_id`, so a full attack run looks like forty-odd different callers and
+ 177: never trips a limit however long it is.
+ 178: 
+ 179: No `429` at all? Either your limit is above 15 a minute, or rate limiting is
+ 180: still off. `GET /health` reports which.
+ 181: 
+ 182: Rejections are logged for you. **An attack that shows up only as an absence is
+ 183: one you'll never find** â€” a thousand requests that got a `429` and left no
+ 184: trace look exactly like a quiet afternoon.
+ 185: 
+ 186: ---
+ 187: 
+ 188: ## Running it somewhere else (unit 9)
+ 189: 
+ 190: Unit 9 asks you to deploy one of your systems. **Read this before you pick
+ 191: which one** â€” for this project the answer is already decided, and it isn't the
+ 192: hosted one.
+ 193: 
+ 194: Flask's built-in server says "development server" on startup because that's
+ 195: what it is. A real one comes from `gunicorn`, which is in
+ 196: `requirements.txt` and unused until now:
+ 197: 
+ 198: ```bash
+ 199: gunicorn app:app --bind 0.0.0.0:$PORT
+ 200: ```
+ 201: 
+ 202: Two settings do the work, and both read the environment:
+ 203: 
+ 204: | Variable | Default | What it does |
+ 205: |---|---|---|
+ 206: | `HOST` | `127.0.0.1` | Loopback â€” your machine only. A host needs `0.0.0.0`, or nothing outside the box can reach the service and it looks like the app is down |
+ 207: | `PORT` | `5000` | Most hosts hand you a port in `PORT` and expect you to bind exactly that one |
+ 208: | `AI201_DEBUG` | `1` | Debug mode. Off automatically whenever `HOST` isn't loopback â€” an interactive debugger on a public address is a stranger's Python prompt inside your process |
+ 209: 
+ 210: Nothing about your local workflow changes. With no variables set you get
+ 211: `http://127.0.0.1:5000` and every `curl` above still works.
+ 212: 
+ 213: ### This project will not fit a free host
+ 214: 
+ 215: Say it plainly, because the arithmetic is the point:
+ 216: 
+ 217: | What has to be in memory | Roughly |
+ 218: |---|---|
+ 219: | `torch` | ~200â€“800 MB depending on the build |
+ 220: | the `gpt2` weights | ~550 MB on disk, loaded into RAM to score |
+ 221: | Flask, gunicorn, your code | the rest |
+ 222: | **A free tier gives you** | **512 MB** |
+ 223: 
+ 224: That's over budget before a single request arrives â€” and a free host has no
+ 225: persistent disk, so the 550 MB download starts again after every idle
+ 226: spin-down. There is no configuration that fixes this. The model is the size it
+ 227: is.
+ 228: 
+ 229: **So pair 4 extensions take Path B â€” local, with logs.** That is the expected
+ 230: answer for this project, not a fallback and not a failure. Working out that a
+ 231: system doesn't fit its host *before* you spend an evening watching it get
+ 232: killed is the skill unit 9 is actually testing. Write the arithmetic above in
+ 233: your write-up; that's the deliverable.
+ 234: 
+ 235: ---
+ 236: 
+ 237: ## Where everything lives
+ 238: 
+ 239: | File | What it does |
+ 240: |---|---|
+ 241: | `config.py` | Every setting: thresholds, weights, rate limits, the model |
+ 242: | `app.py` | The service. `/ping` and `/log` work; `/submit` and `/appeal` are yours |
+ 243: | `detector.py` | Signal one â€” the local model. Given to you |
+ 244: | `stylometry.py` | Signal two. **Stubs â€” you build these** |
+ 245: | `scoring.py` | Combining and labelling. **Stubs â€” you build these** |
+ 246: | `audit.py` | The audit log writer. Given to you |
+ 247: | `run_attacks.py` | Runs the attack set â€” **unit 8** |
+ 248: | `run_eval.py` | Runs your criteria three times â€” **unit 8** |
+ 249: | `scenarios.py` | What your test runs. **You fill this in** |
+ 250: | `criteria.md` | Your five criteria. **You write all five** |
+ 251: | `logs/audit.jsonl` | Your audit log. **Commit it** |
+ 252: | `results/` | Attack runs and run logs. **Commit them** |
+ 253: 
+ 254: ---
+ 255: 
+ 256: ## The two blind spots, up front
+ 257: 
+ 258: Both signals have one, and unit 8's attack set is built out of them. You have
+ 259: to name them yourself in Milestone 1 â€” but knowing they exist now saves you
+ 260: from being surprised.
+ 261: 
+ 262: **Signal one** measures how *predictable* your text is. Predictability isn't
+ 263: authorship. What it really rewards is common words in short, ordinary
+ 264: sentences â€” someone writing in a second language and staying with vocabulary
+ 265: they're sure of, a younger writer, anyone writing plainly on purpose. Writing
+ 266: like that scores about as machine-like as machine writing does. (Dense, ornate
+ 267: prose often goes the other way and reads as human, because rare words are what
+ 268: a language model fails to predict.) So the writers this signal is most likely
+ 269: to accuse are the ones with the least room to argue back. That is the false
+ 270: positive the whole project is about, and it's structural rather than a bug.
+ 271: 
+ 272: **Signal two** cannot read. It has no idea what the text says. Anything that
+ 273: changes the shape without changing the substance moves it â€” typos, broken-up
+ 274: sentences, a pasted quotation. That is very cheap to do on purpose.
+ 275: 
+ 276: ---
+ 277: 
+ 278: ## When something goes wrong
+ 279: 
+ 280: | What you see | What it means |
+ 281: |---|---|
+ 282: | `501 not_implemented` | Correct at the start â€” that's the TODO in `app.py` |
+ 283: | `404` from curl | Is the server running? Is the path exactly what you typed? |
+ 284: | `Cannot bind parameter 'Headers'` | You're in PowerShell, where `curl` is a different tool. Use `curl.exe`, on one line |
+ 285: | Request body arrives empty | curl needs `-H "Content-Type: application/json"` |
+ 286: | `Address already in use` | A server left running from an earlier attempt. Kill it, don't debug it |
+ 287: | The first submission takes 10+ seconds | Signal one is loading the model into memory. Later ones take a second or two |
+ 288: | *Every* submission takes 10+ seconds | Something is reloading the model each call. `GET /health` shows `detector_loaded` â€” if it goes back to `false`, look for a reload in your handler |
+ 289: | `DetectorUnavailable` | Run `python detector.py` once to download the model |
+ 290: | `/appeal` seems to do nothing | Does the `content_id` you sent actually exist in the log? A typo there fails silently |
+ 291: | Every request gets through, no `429` ever | The decorator is uncommented but limiting is still off. Set `RATE_LIMITING_ENABLED` in `config.py` |
+ 292: | Flask-Limiter warns about storage | Shouldn't happen â€” `storage_uri` is preconfigured. If you changed it, put it back |
+ 293: | All three of your labels never appear | Your ranges have a gap. `scoring.label_ranges()` prints them |
+ 294: 
+ 295: If the route won't respond, go back to `/ping`. If that answers, the problem is
+ 296: in your handler.
+ 297: 
+ 298: ---
+ 299: 
+ 300: ## A note on committing
+ 301: 
+ 302: At least four new commits in unit 7, four more in unit 8.
+ 303: 
+ 304: `logs/` and `results/` are deliberately **not** in `.gitignore`. Your audit log
+ 305: is evidence, and the entries you paste into your README are what unit 8 grades.
+ 306: 
+ 307: **Do not delete and recreate this repository.** You submit the same URL both
+ 308: units.
