@@ -39,7 +39,19 @@
 <!-- The path a submission takes, from arriving to the label a reader sees.
      Six or seven steps — this is the trace you wrote in Milestone 1. -->
 
+1. **Receive the submission:** The writer sends their text and creator ID to the `POST /submit` endpoint in `app.py`. The endpoint checks that the submitted text is valid.
 
+2. **Analyze the text with the model:** `detector.py` processes the submitted text using a local language model and returns a model-based detection score.
+
+3. **Analyze the writing style:** `stylometry.py` examines sentence-length variation, vocabulary diversity, and punctuation usage to calculate a writing-style detection score.
+
+4. **Combine the two signals:** `scoring.py::combine_signals` combines the model score and writing-style score into one overall score, using the weights defined in `config.py`.
+
+5. **Determine the classification:** The scoring logic compares the combined score with the thresholds in `config.py` and assigns one of three classifications: high-confidence human, unsure, or high-confidence AI. The classification is converted into a reader-friendly label.
+
+6. **Record the decision:** `audit.py` saves the submission's content ID, creator ID, detection scores, classification, and decision status in `logs/audit.jsonl` for future review or appeal.
+
+7. **Return the result:** The `/submit` endpoint sends a JSON response containing the content ID, guess, confidence score, label text, model score, and style score. The writing site can display the label to the reader.
 
 ---
 
@@ -54,18 +66,24 @@
 ### Signal one — the model signal
 
 **What it measures:**
+detector.py::model_signal uses a local language model to measure text predictability through perplexity. Lower perplexity means the model finds the text easier to predict. The function converts perplexity into a score between 0 and 1, where a higher score indicates more AI-like writing.
 
 **Why that might differ between human and AI writing:**
+AI-generated text often follows predictable word patterns because language models generate text by selecting likely next tokens. Human writing may contain unexpected word choices, unusual sentence structures, and less predictable expressions. These differences can affect perplexity.
 
 **What it can't see:**
+The model cannot determine who actually wrote the text. A human using simple vocabulary, short sentences, or repetitive expressions may receive an AI-like score. This can particularly affect people writing in a second language or deliberately using straightforward wording. Conversely, AI-generated text containing unusual vocabulary or unexpected expressions may appear more human-like to the detector.
 
 ### Signal two — the style signal
 
 **What it measures:**
+stylometry.py is designed to measure statistical properties of writing, including sentence-length variation, vocabulary diversity, and punctuation density. These measurements will be combined into a style score between 0 and 1, where higher values indicate writing that appears more AI-like.
 
 **Why that might differ between human and AI writing:**
+Human and AI-generated writing may differ in sentence structure, word variety, and punctuation patterns. For example, human writing may contain sentences of very different lengths, while some AI-generated writing may use more consistent sentence structures. These patterns can provide clues, but they are not reliable proof of authorship.
 
 **What it can't see:**
+The style signal cannot understand the meaning of the text or identify its actual author. Adding typos, changing punctuation, splitting sentences, or inserting quotations can change its measurements without changing who wrote the text. A human writer with a consistent writing style could also receive an AI-like score.
 
 ### The combining rule
 
