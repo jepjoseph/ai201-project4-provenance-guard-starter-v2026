@@ -1,0 +1,7 @@
+Debugging a React and Express Application: what I learned
+
+Long time programmer but somewhat new to react/express/javascript. I'm building a site for practice and One page I'm having trouble with is pulling data from another site doing some calculations and then pulling more data. I like this design as it puts the work in the api and the react app can concentrate on display. The trouble is that the other site is slow and I think the react app is timeing out, its kinda of hard to debug because everytime I sit to debug it then everything works. Bot overall its not a great design because the looping in the api is open ended so I can't predict how long it will take.
+
+Back in the old days with a TCP socket I'd have the server send a heartbeat back every second and sent the timeout to 2 seconds. Here I don't think HTTP has anyway to do that. Also I don't see anyway to set or adjust any timeouts. I could break this up into multiple smaller requests but that doesn't seem to fix the core issue of not controlling the timeout and makes the overall design worse.
+
+Googling around has been rough so many versions of fetch over the years. I'm using a react app and express and keeping it as vanilla as possible.

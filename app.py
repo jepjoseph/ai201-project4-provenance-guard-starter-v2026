@@ -32,7 +32,8 @@ import audit
 import config
 
 import detector
-
+import scoring
+import stylometry
 app = Flask(__name__)
 
 
@@ -203,43 +204,56 @@ def submit():
     """
 
 
-    payload = request.get_json(silent=True) or {}
+    payload = request.get_json(silent=True)
+
+    if not isinstance(payload, dict):
+        return jsonify({
+            "error": "bad_request",
+            "message": "Send a JSON object containing non-empty text."
+        }), 400
 
     text = payload.get("text")
     creator_id = payload.get("creator_id", "unknown")
 
-    # Step 2 - Validate the submitted text.
     if not isinstance(text, str) or not text.strip():
         return jsonify({
             "error": "bad_request",
             "message": 'Send JSON with a non-empty "text".'
         }), 400
 
-
-    # Step 3 - Calculate the model signal.
+    # Milestone 4: Calculate both independent signals.
     model_score = detector.model_signal(text)
+    style_score = stylometry.style_signal(text)
 
-    # Step 4 - Log the decision.
-    # The content_id is what /appeal needs later.
+    # Combine the signals using the documented scoring rule.
+    combined_score = scoring.combine_signals(
+        model_score,
+        style_score
+    )
+
     content_id = f"c_{uuid.uuid4().hex[:12]}"
 
+    # Preserve all scores for later evaluation and appeals.
     audit.log_decision(
         content_id=content_id,
         creator_id=creator_id,
         model_score=model_score,
+        style_score=style_score,
+        combined_score=combined_score,
         status="decided",
     )
 
-    # TODO: delete this and build the route.
-        # Step 1 - Return a hardcoded response to verify the route works.
+    # Milestone 5 will replace the temporary label and guess.
     return jsonify({
         "content_id": content_id,
         "guess": "unsure",
-        "confidence": 0.5,
+        "confidence": combined_score,
         "label": "not built yet",
         "model_score": model_score,
-        "style_score": None,
+        "style_score": style_score,
+        "combined_score": combined_score,
     }), 200
+
 
 
 @app.post("/appeal")

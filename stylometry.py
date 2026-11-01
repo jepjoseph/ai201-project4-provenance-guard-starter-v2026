@@ -49,82 +49,117 @@ def words(text: str) -> list[str]:
 
 def sentence_length_spread(text: str) -> float:
     """
-    How much sentence length varies. ← TODO
+    Measure sentence-length variation using the coefficient
+    of variation: standard deviation divided by mean length.
 
-    Returns:
-        A float. Decide yourself what scale it's on and which direction means
-        "more human" — then write that down, because your combining rule
-        depends on knowing it.
-
-    A hint on what you're reaching for: the standard deviation of sentence
-    lengths, probably divided by the mean so a long text and a short one are
-    comparable. `statistics.stdev` is imported for you.
-
-    Watch the edge case: a one-sentence submission has no spread at all, and
-    `stdev` raises on fewer than two values. Decide what that should return
-    before the attack set decides for you.
+    Returns 0.0 when fewer than two nonempty sentences exist.
+    Higher values indicate greater variation.
     """
-    # TODO: replace this
-    return 0.0
+    lengths = [
+        len(words(sentence))
+        for sentence in sentences(text)
+    ]
+
+    lengths = [length for length in lengths if length > 0]
+
+    if len(lengths) < 2:
+        return 0.0
+
+    mean_length = statistics.mean(lengths)
+
+    if mean_length == 0:
+        return 0.0
+
+    return round(statistics.stdev(lengths) / mean_length, 4)
 
 
 def type_token_ratio(text: str) -> float:
     """
-    Unique words over total words. ← TODO
+    Measure vocabulary diversity using unique words divided
+    by total words.
 
-    Returns:
-        A float between 0 and 1. Higher means more varied vocabulary.
-
-    Worth knowing before you rely on it: this measure falls as text gets
-    longer, because common words repeat. Two texts of different lengths aren't
-    directly comparable on it, and if your test inputs vary a lot in length,
-    that alone can look like a signal.
+    Returns a value between 0.0 and 1.0.
+    Returns 0.0 when no words are present.
+    Higher values indicate greater vocabulary diversity.
     """
-    # TODO: replace this
-    return 0.0
+    tokens = words(text)
+
+    if not tokens:
+        return 0.0
+
+    unique_words = len(set(tokens))
+    total_words = len(tokens)
+
+    return round(unique_words / total_words, 4)
 
 
 def punctuation_density(text: str) -> float:
     """
-    How much punctuation, relative to length. ← TODO
+    Measure punctuation relative to non-whitespace characters.
 
-    Returns:
-        A float. Whether you count all punctuation or only some kinds — commas,
-        semicolons, dashes — is a real choice. Semicolons and em dashes are
-        more interesting than full stops, because they vary more between
-        writers.
+    Includes ASCII punctuation and common Unicode punctuation.
+    Returns 0.0 for empty or whitespace-only text.
+    Higher values indicate greater punctuation density.
     """
-    # TODO: replace this
-    return 0.0
+    import string
+    import unicodedata
 
+    characters = [char for char in text if not char.isspace()]
+
+    if not characters:
+        return 0.0
+
+    punctuation_count = sum(
+        1
+        for char in characters
+        if char in string.punctuation
+        or unicodedata.category(char).startswith("P")
+    )
+
+    return round(punctuation_count / len(characters), 4)
 
 # ── Combining them ───────────────────────────────────────────────────────────
 
 def style_signal(text: str) -> float:
     """
-    The style signal as a 0–1 score. **Higher means more likely AI.** ← TODO
+    Combine three stylometry measurements into a conservative
+    AI-likeness score between 0.0 and 1.0.
 
-    Combine your three measures into one number. Same direction as
-    `detector.model_signal`, so that `scoring.combine_signals` can treat them
-    the same way — if one of your signals runs backwards, everything above it
-    is wrong in a way that's hard to see.
-
-    Two things to decide and write down:
-
-      1. Which direction each measure points. Low spread means more AI-ish, so
-         it needs flipping. Work out which of your three need that.
-      2. How to get each onto a comparable scale. A raw type-token ratio sits
-         between 0 and 1; a raw punctuation count doesn't. Adding them
-         unscaled means whichever has the bigger numbers wins by default.
-
-    Test it on the four calibration inputs from Milestone 4 — clearly AI,
-    clearly human, plain conventional human writing, lightly-edited AI — before
-    you trust it. Plain and ordinary, not formal: formal prose reads as *human*
-    to signal one, and it is plain writing that gets accused.
+    Higher values indicate more AI-like writing patterns.
+    The score is a heuristic, not proof of authorship.
     """
-    # TODO: replace this
-    return 0.5
+    tokens = words(text)
+    sentence_list = [
+        sentence for sentence in sentences(text)
+        if words(sentence)
+    ]
 
+    if len(tokens) < 30 or len(sentence_list) < 2:
+        return 0.5
+
+    spread = sentence_length_spread(text)
+    diversity = type_token_ratio(text)
+    punctuation = punctuation_density(text)
+
+    spread_ai = 1.0 - min(spread / 0.8, 1.0)
+    diversity_ai = 1.0 - min(diversity / 0.8, 1.0)
+
+    punctuation_ai = 0.5
+
+    if punctuation < 0.02:
+        punctuation_ai = 0.6
+    elif punctuation > 0.20:
+        punctuation_ai = 0.4
+
+    raw_score = (
+        0.45 * spread_ai
+        + 0.40 * diversity_ai
+        + 0.15 * punctuation_ai
+    )
+
+    score = 0.5 + 0.5 * (raw_score - 0.5)
+
+    return round(max(0.0, min(1.0, score)), 4)
 
 if __name__ == "__main__":
     import sys

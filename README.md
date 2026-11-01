@@ -91,8 +91,10 @@ The style signal cannot understand the meaning of the text or identify its actua
      signals disagree? -->
 
 **The rule:**
+I combine the model and stylometry signals using an equally weighted average. Both scores range from 0 to 1, with higher values indicating more AI-like patterns. If the signals disagree, their average reflects that uncertainty rather than automatically favoring an AI accusation. This score is not proof of authorship.
 
 **The numbers:**
+Combined score = (0.50 * model_score) + (0.50 * style_score). The model signal contributes 50%, and the style signal contributes 50%. These initial weights will be evaluated using the four Milestone 4 calibration samples.
 
 **Where it lives:** `scoring.py::combine_signals`
 
@@ -101,7 +103,17 @@ The style signal cannot understand the meaning of the text or identify its actua
 
 **A case where my two signals split, and what my rule does with it:**
 
+In my four-sample calibration, Sample A was AI-generated. The model signal returned 0.8081, while the stylometry signal returned 0.4404. The two signals differed by 0.3677.
 
+Using the equal-weighted rule, the combined score was 0.6242. With the current thresholds of 0.35 for human and 0.65 for AI, this score falls into the unsure range rather than receiving a high-confidence AI label.
+
+The human-written samples also received unsure-range scores: Sample B scored 0.4686 and Sample C scored 0.5698. The edited AI sample, Sample D, scored 0.6347.
+
+The average combined score was approximately 0.6295 for the two AI-origin samples and 0.5192 for the two human-origin samples, a difference of about 0.1103.
+
+This preliminary calibration does not meet my acceptance criterion requiring at least 0.20 average separation across three trials with 10 human and 10 AI samples. It also does not demonstrate that all three labels are reachable. I am keeping the current weights and thresholds provisional rather than claiming that the detector has been validated.
+
+The split illustrates why neither signal should be treated as proof of authorship. An unsure decision allows uncertain cases to avoid an automatic high-confidence accusation.
 
 ---
 
