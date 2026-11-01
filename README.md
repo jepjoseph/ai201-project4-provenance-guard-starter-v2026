@@ -119,69 +119,119 @@ The split illustrates why neither signal should be treated as proof of authorshi
 
 ## Label Variants
 
-<!-- The exact text of all three labels, as a reader would see them, and the
-     score range each covers.
-
-     Write them for someone who has never heard the word "threshold". -->
+The combined score ranges from 0 to 1. A higher score means
+the writing exhibits more AI-like patterns. It is not a
+verified probability of AI authorship.
 
 | Label | Score range | The exact text a reader sees |
 |---|---|---|
-| high-confidence human |  |  |
-| unsure |  |  |
-| high-confidence AI |  |  |
+| high-confidence human | 0.00 <= score < 0.35 | This writing shows patterns associated with human writing, but its authorship cannot be confirmed. |
+| unsure | 0.35 <= score <= 0.65 | We cannot reliably determine whether this writing was created by a person or AI. No conclusion about authorship should be drawn from this result. |
+| high-confidence AI | 0.65 < score <= 1.00 | This writing shows patterns associated with AI-generated text, but this is not proof that AI was used. |
 
 **Why I worded the "unsure" one this way:**
-<!-- It's the hardest of the three. It has to admit uncertainty without
-     sounding like an accusation, because the person reading it may well have
-     written every word themselves. -->
 
-
+The detector cannot verify who actually wrote a piece of text.
+I wanted the unsure label to explain that limitation clearly,
+without making the writer feel accused of using AI. A person
+may have written the entire submission themselves, even when
+the detector finds patterns that resemble AI-generated writing.
 
 ---
 
 ## Sample Run
 
-<!-- One submission and one appeal, pasted as text: the request, the response,
-     and the log entries. -->
+The following results come from the real detector workflow
+tested on November 1, 2026, using the existing calibration
+samples. The requests were sent through Flask's test client,
+rather than through a separately running curl server.
+The audit log was temporarily redirected during testing.
 
 **A submission**
 
-<!-- The response needs content_id, guess, confidence, label, AND both
-     signal scores - model_score and style_score. Unit 8's tools read those
-     two off the response, so leaving them out costs you next unit's
-     diagnostics. -->
-
-```bash
-$ curl -X POST http://127.0.0.1:5000/submit \
-  -H "Content-Type: application/json" \
-  -d '{"text": "...", "creator_id": "..."}'
-```
+Request:
 
 ```json
+{
+  "text": "<contents of results/calibration/sample_B_human_natural.txt>",
+  "creator_id": "calibration-sample_B_human_natural.txt"
+}
+```
 
+Response (HTTP 200):
+
+```json
+{
+  "combined_score": 0.4686,
+  "confidence": 0.4686,
+  "content_id": "c_4ed32b18aab0",
+  "guess": "unsure",
+  "label": "We cannot reliably determine whether this writing was created by a person or AI. No conclusion about authorship should be drawn from this result.",
+  "model_score": 0.4853,
+  "style_score": 0.4519
+}
 ```
 
 **An appeal**
 
-```bash
-$ curl -X POST http://127.0.0.1:5000/appeal \
-  -H "Content-Type: application/json" \
-  -d '{"content_id": "...", "reasoning": "..."}'
-```
+Request:
 
 ```json
-
+{
+  "content_id": "c_4ed32b18aab0",
+  "reasoning": "This is my own writing. I would like the classification reviewed."
+}
 ```
 
-**What the log shows afterwards**
-
-```bash
-$ curl "http://127.0.0.1:5000/log?limit=3"
-```
+Response (HTTP 200):
 
 ```json
-
+{
+  "content_id": "c_4ed32b18aab0",
+  "message": "Your appeal has been recorded for review.",
+  "status": "under_review"
+}
 ```
+
+**Audit log entries**
+
+```json
+[
+  {
+    "combined_score": 0.4686,
+    "content_id": "c_4ed32b18aab0",
+    "creator_id": "calibration-sample_B_human_natural.txt",
+    "guess": "unsure",
+    "label": "We cannot reliably determine whether this writing was created by a person or AI. No conclusion about authorship should be drawn from this result.",
+    "model_score": 0.4853,
+    "status": "decided",
+    "style_score": 0.4519,
+    "timestamp": "2026-11-01T19:20:35+00:00"
+  },
+  {
+    "content_id": "c_4ed32b18aab0",
+    "creator_id": "calibration-sample_B_human_natural.txt",
+    "event": "appeal",
+    "reasoning": "This is my own writing. I would like the classification reviewed.",
+    "status": "under_review",
+    "timestamp": "2026-11-01T19:20:35+00:00"
+  }
+]
+```
+
+**Calibration observations**
+
+| Sample | Combined score | Result |
+|---|---:|---|
+| AI-generated | 0.62425 | unsure |
+| Human-natural | 0.46860 | unsure |
+| Human-plain | 0.56985 | unsure |
+| AI-edited | 0.63465 | unsure |
+
+All four real submissions received the unsure label.
+Controlled-score tests confirmed that all three label branches
+are reachable, but this four-sample run did not demonstrate
+all three outcomes with real detector inputs.
 
 ---
 
