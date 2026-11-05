@@ -255,25 +255,44 @@ all three outcomes with real detector inputs.
 
 ## Rate Limiting
 
-**My limits:** ___ per minute, ___ per day
+**My limits:** 5 per minute, 50 per day
 
 **Why those numbers and not others:**
 <!-- Think about two people: a real writer submitting their own work a few
      times an hour, and a script sending a thousand variations to map your
      thresholds. Your numbers have to be liveable for the first and hostile to
      the second. -->
+I chose 5 submissions per minute and 50 submissions per day because Provenance Guard is designed for writers submitting their work for evaluation, not for high-volume automated processing. A legitimate writer submitting a few pieces of work per hour should be able to use the service without reaching these limits.
+
+The 5-per-minute limit makes rapid automated probing more difficult by restricting how quickly a script can submit variations to discover the detector's classification thresholds. The 50-per-day limit further restricts sustained probing while providing enough capacity for normal use. These limits are more restrictive than 10 per minute and 100 per day, but the tradeoff is that legitimate users making many submissions in a short period may receive HTTP 429 responses.
 
 **What a caller counts as:** <!-- per address, or per creator_id? They fail
 differently — one script can look like a thousand callers, and one household
 can look like one. -->
 
+Per creator_id, with a fallback to the caller's IP address when a usable creator_id is unavailable.
+
+This allows the system to enforce limits separately for different creators, even when they share the same IP address. However, because the creator_id is supplied by the caller rather than verified through authentication, an attacker could bypass the limit by repeatedly changing creator IDs. Requests without a usable creator_id are grouped by IP address, which can cause unrelated users sharing an address to affect each other's limits.
+
 **The run of status codes when I pushed past it:**
 
 <!-- python run_attacks.py --flood 15 -->
 
-```
+Command:
 
-```
+python run_attacks.py --flood 15
+
+Actual output from November 4, 2026, at 9:05 PM:
+
+============================================================
+200 200 200 200 200 429 429 429 429 429 429 429 429 429 429
+============================================================
+
+The test submitted 15 requests using the same creator_id (flood_tester). The first 5 requests returned HTTP 200, and the remaining 10 returned HTTP 429.
+
+This confirms that the configured per-minute rate limit was enforced during the test.
+
+Evidence: results/flood_2026-11-04_2105.md
 
 ---
 
