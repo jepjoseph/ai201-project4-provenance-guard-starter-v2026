@@ -249,6 +249,12 @@ all three outcomes with real detector inputs.
 - **What came back:** AI suggested request validation, checking existing content IDs through `audit.entries_for()`, and recording appeals through `audit.log_appeal()`. It also provided scripts to test successful submissions, invalid appeals, and audit history.
 - **What I changed:** I applied the implementation, ran the API tests, and verified the results. I confirmed that valid appeals returned `under_review`, invalid requests were rejected, and the original decisions remained in the audit log. I also tested the workflow using the actual detector and documented the results.
 
+
+**Moment 3 - Unit 8 adversarial evaluation**
+
+- **What I asked for:** AI assistance with test commands, attack interpretation, acceptance criteria, and Git verification.
+- **What came back:** PowerShell checks, before-and-after comparisons, and documentation suggestions.
+- **What I changed:** I ran and reviewed the tests, retained the measured failures, verified audit records, and did not claim that input validation improved detection accuracy.
 <!-- ═══════════════════════ UNIT 8 — THE TEST ═══════════════════════ -->
 
 ---
@@ -661,6 +667,85 @@ authors, even if that means allowing more AI-generated text
 to receive an `unsure` label. Human writers bear the
 greater immediate cost when a detector incorrectly
 presents their original work as AI-generated.
+
+---
+
+
+### Milestone 6 - Final remaining failures
+
+The 56-case after-run report has been manually interpreted using
+the original attack objectives. RQ10 and RQ11 are INCONCLUSIVE
+because HTTP 429 prevented direct content-type validation.
+
+#### Evasion cases still BROKE
+
+| Case | Problem | Next improvement |
+| --- | --- | --- |
+| EV01 | Typos change vocabulary diversity | Test typo normalization |
+| EV02 | Fragmented sentences change length variation | Improve segmentation |
+| EV03 | Quoted passages distort style features | Analyze quotations separately |
+| EV04 | Unusual vocabulary changes perplexity | Calibrate across genres |
+| EV05 | Heavy human editing masks AI origin | Test mixed-authorship writing |
+| EV06 | Extreme sentence lengths distort statistics | Use robust dispersion |
+| EV07 | Punctuation padding alters features | Normalize excessive punctuation |
+| EV08 | Short passages lack sufficient context | Require a reliable token window |
+| EV09 | Human opening masks AI-origin content | Add passage-level scoring |
+
+EV10 remained HELD because it received an AI classification.
+
+#### Other remaining weaknesses
+
+- MF03: Control-character-only input was accepted; reject non-prose.
+- MF04: Punctuation-only input was classified; require meaningful text.
+- MF06: Emoji-only input was labeled AI; reject unsupported input.
+- RQ06: Object-valued creator_id was accepted; enforce string validation.
+- RQ10/RQ11: HTTP 429 obscured content-type behavior; retest without rate-limit interference.
+- Rate limiting: Caller-controlled creator IDs permit rotation; require authenticated identity.
+
+#### Missed acceptance criteria
+
+**Criterion 2 - MISSED:** AI-human score separation remained
++0.03387 versus the +0.20 target. I would calibrate the
+model and stylometric signals using a larger labeled corpus
+and validate any new weights on independent samples.
+
+**Criterion 3 - MISSED:** The evaluation produced only `unsure`
+labels, not all three required labels. I would inspect score
+distributions and recalibrate thresholds while monitoring
+false-positive accusations.
+
+I stopped after the targeted input-validation improvement
+because further scoring changes would make attribution of
+improvements difficult, and earlier experimental reweighting
+performed poorly on held-out human writing.
+
+#### Production trade-off
+
+I would prioritize fewer false accusations of genuine human
+writers, even if that allows more AI-generated text to remain
+undetected. Writers avoid unfair penalties, while reviewers
+and institutions bear the cost of additional manual review
+and less definitive automated detection.
+
+The detector should be advisory, not proof of authorship.
+
+#### Ten actual audit log entries
+
+The following ten entries are taken from the real audit log,
+including rejected requests, appeals, and completed decisions.
+
+```jsonl
+{"timestamp":"2026-11-08T20:44:00+00:00","creator_id":"ext_ce85aa760e_t3_invalid_7","event":"rejected","status":"rejected","reason":"invalid_or_empty_text"}
+{"timestamp":"2026-11-08T20:44:01+00:00","creator_id":"ext_ce85aa760e_t3_invalid_8","event":"rejected","status":"rejected","reason":"invalid_or_empty_text"}
+{"timestamp":"2026-11-08T20:44:01+00:00","creator_id":"unknown","event":"rejected","status":"rejected","reason":"rate_limited","limit":"5 per 1 minute"}
+{"timestamp":"2026-11-08T20:44:01+00:00","creator_id":"ext_ce85aa760e_t3_invalid_10","event":"rejected","status":"rejected","reason":"text_exceeds_maximum_length"}
+{"timestamp":"2026-11-08T20:44:00+00:00","content_id":"c_c530b380c8c3","creator_id":"ext_ce85aa760e_t3_appeal_9","event":"appeal","status":"under_review","reasoning":"Valid appeal evaluation trial 3, case 9."}
+{"timestamp":"2026-11-08T20:44:00+00:00","content_id":"c_a7fd44ae1ef4","creator_id":"ext_ce85aa760e_t3_appeal_10","event":"appeal","status":"under_review","reasoning":"Valid appeal evaluation trial 3, case 10."}
+{"timestamp":"2026-11-08T20:44:01+00:00","content_id":"c_b6e1df86ee1c","creator_id":"ext_ce85aa760e_t3_recovery_7","guess":"unsure","model_score":0.5746,"style_score":0.4751,"combined_score":0.52485,"label":"We cannot reliably determine whether this writing was created by a person or AI. No conclusion about authorship should be drawn from this result.","status":"decided"}
+{"timestamp":"2026-11-08T20:44:01+00:00","content_id":"c_be9f67254418","creator_id":"ext_ce85aa760e_t3_recovery_8","guess":"unsure","model_score":0.5746,"style_score":0.4751,"combined_score":0.52485,"label":"We cannot reliably determine whether this writing was created by a person or AI. No conclusion about authorship should be drawn from this result.","status":"decided"}
+{"timestamp":"2026-11-08T20:44:01+00:00","content_id":"c_17ea8fd9d892","creator_id":"ext_ce85aa760e_t3_recovery_9","guess":"unsure","model_score":0.5746,"style_score":0.4751,"combined_score":0.52485,"label":"We cannot reliably determine whether this writing was created by a person or AI. No conclusion about authorship should be drawn from this result.","status":"decided"}
+{"timestamp":"2026-11-08T20:44:01+00:00","content_id":"c_0140bb499589","creator_id":"ext_ce85aa760e_t3_recovery_10","guess":"unsure","model_score":0.5746,"style_score":0.4751,"combined_score":0.52485,"label":"We cannot reliably determine whether this writing was created by a person or AI. No conclusion about authorship should be drawn from this result.","status":"decided"}
+```
 
 ---
 
