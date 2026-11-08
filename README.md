@@ -605,8 +605,11 @@ The existing scoring implementation remains unchanged.
 ### Attack Run ? After
 
 The corrected input-validation behavior is supported by the
-extended acceptance report. A complete post-change adversarial
-attack-suite result is not claimed here unless separately recorded.
+extended acceptance report. The complete post-change adversarial
+attack suite was also run and recorded in
+`results/attack_run_2026-11-08_1543_after.md`, containing 56 cases
+with recorded outcomes and verdicts. The report includes two
+inconclusive content-type cases where HTTP 429 prevented a direct test.
 
 **Did it help?** Yes, for oversized submissions: the original
 failure became a consistent HTTP 400 rejection. It did not resolve
@@ -693,6 +696,36 @@ because HTTP 429 prevented direct content-type validation.
 
 EV10 remained HELD because it received an AI classification.
 
+#### Detailed malformed-input diagnoses
+
+The following cases remained BROKE in the after-run report.
+
+| Attack | Observed result | Pipeline stage | Mechanism |
+| --- | --- | --- | --- |
+| MF03 | HTTP 200, `human`, 0.250 | Input validation | The route accepts nonempty strings without requiring meaningful prose, so control characters reach the detector and receive a classification. |
+| MF04 | HTTP 200, `human`, 0.256 | Input validation | Punctuation-only strings pass basic validation and receive a human label despite lacking linguistic content. |
+| MF06 | HTTP 200, `ai`, 0.748 | Input validation and label mapping | Emoji-only text reaches scoring and receives an AI label even though it provides no reliable prose evidence of authorship. |
+| RQ06 | HTTP 200, `human`, 0.275 | Request schema validation | The rate-limit key function validates the creator ID for limiting purposes, but `/submit` does not reject an object-valued creator ID before logging a decision. |
+
+These failures remain unresolved. I would add meaningful-text checks
+and explicit creator ID type validation before invoking the detector.
+Those changes were not implemented or tested in this unit.
+
+#### Audit event schema clarification
+
+The nine required fields for completed decisions are `timestamp`,
+`content_id`, `creator_id`, `guess`, `model_score`, `style_score`,
+`combined_score`, `label`, and `status`. The `audit.log_decision`
+function records all nine.
+
+Rejected requests and appeals have event-specific schemas.
+Rejections record a timestamp, creator ID, event, rejected status,
+and reason without inventing classification scores. Appeals record
+their content ID, creator ID, `under_review` status, and reasoning.
+
+The README contains actual examples of all three event types.
+This distinction reflects the implementation and does not imply
+that rejected or appeal records contain all nine decision fields.
 #### Other remaining weaknesses
 
 - MF03: Control-character-only input was accepted; reject non-prose.
