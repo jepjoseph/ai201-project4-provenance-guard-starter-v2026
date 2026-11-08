@@ -678,6 +678,126 @@ SUBMISSION CHECKLIST — unit 7
        [x] At least four new commits
        [x] Repository URL submitted — WRITE IT DOWN
 
+
+---
+
+## Unit 8 Milestone 4 - Verdicts and Diagnoses
+
+The five original acceptance criteria in `criteria.md` remain
+unchanged. Each target must hold in all three trials.
+
+### Acceptance verdicts
+
+| Criterion | Target | Trial 1 | Trial 2 | Trial 3 | Verdict |
+| --- | --- | --- | --- | --- | --- |
+| 1. Human false positives | At most 1/10 | 0/10 | 0/10 | 0/10 | **MET** |
+| 2. AI-human separation | At least +0.20 | +0.0339 | +0.0339 | +0.0339 | **MISSED** |
+| 3. Label coverage | All three labels | unsure only | unsure only | unsure only | **MISSED** |
+| 4. Valid appeals | 10/10 | 10/10 | 10/10 | 10/10 | **MET** |
+| 5. Invalid input and recovery | 10/10 | 10/10 | 10/10 | 10/10 | **MET** |
+
+### How each verdict was decided
+
+**1 - MET:** No high-confidence AI accusation occurred among
+the ten verified human texts in any trial.
+
+**2 - MISSED:** The average AI-minus-human combined score was
++0.03387 in each trial, below the required +0.20.
+
+**3 - MISSED:** All twenty evaluation texts were labeled
+`unsure` in every trial. Neither `human` nor `ai` appeared.
+
+**4 - MET:** All ten valid appeals succeeded with matching
+`under_review` audit entries in each trial.
+
+**5 - MET after the fix:** All ten invalid submissions returned
+HTTP 4xx and valid submissions continued succeeding in each
+post-fix trial. The baseline had missed because an oversized
+submission was accepted.
+
+### Root causes of missed criteria
+
+**Criterion 2 - Signals one and two; combining rule:**
+GPT-2 perplexity and stylometric features did not distinguish
+the human and AI groups sufficiently. Their equally weighted
+combination yielded overlapping scores and a group-average
+difference of only +0.03387. The evidence does not establish
+which individual signal contributed most.
+
+**Criterion 3 - Combining rule; label mapping:**
+All combined scores remained between the 0.35 human threshold
+and the 0.65 AI threshold. Consequently, label mapping
+assigned `unsure` to every text. The underlying scoring
+weakness is related to criterion 2.
+
+### Broken attack diagnoses
+
+The baseline attack report is
+`results/attack_run_2026-11-04_2130_before.md`.
+
+| Attack | Result | Stage | Mechanism |
+| --- | --- | --- | --- |
+| EV01 | human, 0.319 | Signal two | Typos alter measured word variety |
+| EV02 | unsure, 0.441 | Signal two | Sentence fragmentation changes length spread |
+| EV03 | unsure, 0.527 | Signal two | Quotation insertion changes style features |
+| EV04 | unsure, 0.538 | Signal one | Unusual words can raise perplexity |
+| EV05 | human, 0.326 | Both signals | Human editing changes predictability and style |
+| EV06 | unsure, 0.440 | Signal two | Unequal sentence lengths change spread |
+| EV07 | unsure, 0.543 | Signal two | Punctuation padding changes style measurements |
+| EV08 | unsure, 0.373 | Signal one | Short/token-window behavior weakens evidence |
+| EV09 | unsure, 0.543 | Both signals | A human opening changes AI-origin text statistics |
+
+These mechanisms describe the features targeted by the
+attacks; individual causal contributions were not verified
+through controlled ablation experiments.
+
+**EV10 - HELD:** Repeated-stanza text received `ai` (0.754).
+
+**MF02 - BROKE at baseline:** A one-character submission
+returned HTTP 500. Stage: route/error handling. Mechanism:
+the detector's exception was not converted into HTTP 4xx.
+The later validation fix addressed short invalid input.
+
+**RQ10/RQ11 - Inconclusive:** Both received HTTP 429.
+Rate limiting prevented independent content-type validation.
+
+### Shared failure pattern
+
+Seven of nine broken evasion cases targeted stylometric
+features or both signals; EV04 and EV08 targeted the model
+signal. Surface-level text transformations can therefore
+reduce the reliability of AI-origin classification.
+
+The missed score-separation and label-coverage criteria
+also share a weak-discrimination problem.
+
+### Criterion review and surprising result
+
+No original criterion was revised because every target
+was measurable. Lowering missed targets would conceal
+the failures.
+
+Criterion 2 surprised me most. I expected at least +0.20
+separation but measured +0.03387.
+
+An opposing argument is that any positive difference
+demonstrates separation. However, the explicit target
+was +0.20 in every trial, so the recorded result is MISSED.
+
+### Milestone 4 conclusion
+
+**3 MET, 2 MISSED.**
+
+The detector met its original false-positive target,
+appeal target, and corrected invalid-input target.
+It missed AI-human score separation and label coverage.
+
+I would prioritize reducing false accusations of genuine
+writers while improving discrimination on independently
+verified evaluation samples.
+
+---
+
 <!-- ═════════════════════════════════════════════════════════════════════
      SUBMISSION CHECKLIST — unit 8
 
