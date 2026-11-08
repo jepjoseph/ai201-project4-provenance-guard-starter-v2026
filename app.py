@@ -229,8 +229,29 @@ def submit():
             "message": 'Send JSON with a non-empty "text".'
         }), 400
 
+    # Reject oversized submissions before invoking the local model.
+    if len(text) > config.MAX_TEXT_LENGTH:
+        audit.log_rejection(
+            creator_id=creator_id if isinstance(creator_id, str) else "unknown",
+            reason="text_exceeds_maximum_length",
+        )
+        return jsonify({
+            "error": "bad_request",
+            "message": f"Text must not exceed {config.MAX_TEXT_LENGTH} characters."
+        }), 400
+
     # Milestone 4: Calculate both independent signals.
-    model_score = detector.model_signal(text)
+    try:
+        model_score = detector.model_signal(text)
+    except ValueError as exc:
+        audit.log_rejection(
+            creator_id=creator_id if isinstance(creator_id, str) else "unknown",
+            reason="text_too_short_to_score",
+        )
+        return jsonify({
+            "error": "bad_request",
+            "message": str(exc)
+        }), 400
     style_score = stylometry.style_signal(text)
 
     # Combine the signals using the documented scoring rule.

@@ -1,0 +1,56 @@
+{
+  "source": "Original human-written evaluation samples provided by the author",
+  "author_verified": true,
+  "samples": [
+    {
+      "id": "H01",
+      "topic": "My experience learning Python",
+      "text": "I started learning Pyhon as a computer engineering from my first semester at Florida Atlantic University, and it was a great experience because I already knew programming algorithm and other programming languages that are way more difficult than Python. And at the end of the semester, I was proud of myself for getting a grade A for that class. I did not get A+ because I was not able to pay for a professional Python certificate that was an extra credit for the class."
+    },
+    {
+      "id": "H02",
+      "topic": "Why I decided to study computer engineering",
+      "text": "As an Electronic Engineer, I found it really interesting to have a strong career in this field and for me there is no better way to learn new technologies and have a strong background in computer engineering than getting into a program that can povide all the materials and resources to guide me through the process. I decided to take this path to accomplish my dreams not because it is the only way but because it is the better one."
+    },
+    {
+      "id": "H03",
+      "topic": "A technical problem I solved",
+      "text": "I was working on a personal project where I must create my own printed circuit board. The design and the PCB layout on the software was the easy piece, but the pain was always the conversion part from the design to G-Code where the CNC machine had to cut and mill the board, I was using a software that was not really compatible with my CNC machine and it was impossible to install the right software with a lack of GitHub experience. Since I become familiar with GitHub platform because of my Cod Path classes, I was able to install the right software and made my PCB possible."
+    },
+    {
+      "id": "H04",
+      "topic": "My experience working on a group project",
+      "text": "Now as I am taking my WEB103 CodPath class, I am in a group where everyone is responsible to deliver and work on their task, I think I am doing the easiest part which is managing the group, reviewing and improving the code, but for me it is the hardest part cause I am more comfortable on coding than managing people, I wish I had a choice to do otherwise, but iti is what it is and at the end of the day it is really helpful because I am developing a skill that I hated in my entire life and can be beneficial to me for my career."
+    },
+    {
+      "id": "H05",
+      "topic": "Something I learned about artificial intelligence",
+      "text": "This 2026 Fall semester I have learn new things about AI and for me it is the center piece of it. I am developing a locally AI platform for an Enterprise use. It has these different components or system layers (The system has a React Frontend where users interact with the assistant and Node.js the backend that manage users' requests. The backend communicates with llama.cpp which is an AI inference engine running locally on a local server of the enterprise. The AI engine (Implemented as a Standalone Architecture) loads QWEN which is a light language model that generates answers to the users’ questions. I am planning to integrate other models that will be able to answer complicated programming, math questions and a RAG system that will be able to get information from company documents before generating answers.)"
+    },
+    {
+      "id": "H06",
+      "topic": "My opinion about technology in education",
+      "text": "I think technology is the highway that allowed fast learning in education nowadays. It is more convenient to get the right information than it used to be before. The education systems became easier either to deliver courses and documents to the students or grading students accurately. The improvement of technology tools is fascinated and make the system more confident than ever. with these improvemnents, I think the education system will be more efficient and effective in the future. Researchers and students will be able to get as quick as possible the right information in a time record and make the right decisions for their research and studies."
+    },
+    {
+      "id": "H07",
+      "topic": "A challenge I encountered while programming",
+      "text": "One of the challenges I encountered while programming which is still a challenge. I am developing a platform to centralize IoT devices form home, and one the most difficult part is the communication features I am still working on. IoT devices use different way to interact to each other, their commutation protocols, the format and so.. are all different. I was able to integrate some amid others are still a challenge. I am expecting by the end of this year resolving this issue before launching my first version for testing."
+    },
+    {
+      "id": "H08",
+      "topic": "My experience learning JavaScript or React",
+      "text": "This is one of the best experiences of my journeys; this is something I always expected to do. On my early college days, I wanted to develop and implement real website projects and made them accessible online. After my first internship, I got a contract and one of my projects was working on developing a website for the office it was Haiti Standardized Office that its role is to regulate rules on different domains in the country. It was a big challenge because I had to learn react and JavaScript, I didn't finish the project because I had a better opportunity with a bank to work as an IT system administrator. Now I made this possible and I have a lot of ongoing projects that are online and people can access them everywhere from the world. I have a list (https://motich.com, https://portfolio.motich.com, https://dms.motich.com/ai, https://dms.motich.com/sac, https://dms.motich.com/sam, https://dms.motich.com/learninghub)."
+    },
+    {
+      "id": "H09",
+      "topic": "How technology can improve everyday life",
+      "text": "For me with the improvement of AI platform, spending time of thinking how to writing the right code and implementing the appropriate functions, and debugging has been resolved, now it is more defining the structure, rules and checking your results, which leads to spending more time on testing a product than making the product, this is a revolution that affects more and more the programming world which I always enjoy doing. I am confident in the future our role will be more on implement guard rails and rules to make sure the AI is doing the right thing, and we our role will be more on testing and improving AI systems."
+    },
+    {
+      "id": "H10",
+      "topic": "My future professional goals",
+      "text": "My goals are to master AI engineering and full stack web development so I can improve my local enterprise AI platform (https://dms.motich.com/ai ) that can compete the most powerful AI system in the world, improving my Java and C++ programming languages, SQL, IT and Electronic skills to make possible my centralize IoT platform and finally have my smart home company (https://motich.com). My company will be focusing on integrating existing system into one which will make a difference from existing smart homes companies we have now."
+    }
+  ]
+}

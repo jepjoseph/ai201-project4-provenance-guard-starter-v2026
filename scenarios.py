@@ -1,70 +1,67 @@
-"""
-What your test runs. ← UNIT 8, MILESTONE 3
+"""Evaluation scenarios for AI201 Unit 8 Milestone 3."""
 
-Each of your five criteria needs something run against it. A criterion about
-false positives needs your own writing. One about label coverage needs inputs
-across the score range. One about the appeal path needs a real content_id.
+import json
+from pathlib import Path
 
-Working that out is Milestone 3's first step, and this file is where you write
-it down. `run_eval.py` runs everything here three times.
 
-Two are filled in as examples. Replace them with what your criteria actually
-need — these are a shape, not a set.
+SAMPLES_DIR = Path(__file__).resolve().parent / "samples"
 
-A scenario carries **either** of these:
 
-    "texts"   a list of strings. Each is sent as {"text": ..., "creator_id": ...}
-              with a creator_id made up for you. Use this for most criteria.
+def load_samples(filename):
+    """Load and validate a ten-sample evaluation dataset."""
+    path = SAMPLES_DIR / filename
 
-    "bodies"  a list of whole request bodies, sent exactly as written. Use this
-              when the malformed request IS the point — empty text, no `text`
-              field at all, something enormous. A bad-input criterion needs it,
-              because you cannot express "the field is missing" as a string.
-"""
+    with path.open("r", encoding="utf-8") as handle:
+        data = json.load(handle)
+
+    samples = data["samples"]
+
+    if len(samples) != 10:
+        raise ValueError(f"{filename}: expected exactly 10 samples")
+
+    ids = set()
+
+    for sample in samples:
+        sample_id = sample["id"]
+        text = sample["text"]
+
+        if not isinstance(sample_id, str) or not sample_id.strip():
+            raise ValueError(f"{filename}: invalid sample ID")
+
+        if sample_id in ids:
+            raise ValueError(f"{filename}: duplicate sample ID {sample_id}")
+
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError(f"{filename}: empty or invalid text")
+
+        ids.add(sample_id)
+
+    return samples
+
+
+HUMAN_SAMPLES = load_samples("human_eval_10.json")
+AI_SAMPLES = load_samples("ai_eval_10.json")
+
+HUMAN_TEXTS = [sample["text"] for sample in HUMAN_SAMPLES]
+AI_TEXTS = [sample["text"] for sample in AI_SAMPLES]
+
 
 SCENARIOS = [
     {
-        "name": "my own writing",
+        "name": "human_false_positive",
         "criterion": 1,
-        # ⚠️ PUT YOUR OWN WRITING HERE. Not AI text, not a sample from the web —
-        # things you actually wrote. This is the criterion that matters most and
-        # it's meaningless with someone else's prose.
-        "texts": [
-            "REPLACE ME with a paragraph you wrote yourself.",
-            "REPLACE ME with another one. Ten pieces is the usual number.",
-        ],
+        "texts": HUMAN_TEXTS,
     },
     {
-        "name": "label coverage",
+        "name": "ai_human_separation",
         "criterion": 2,
-        # Inputs spread across your score range, so you can check all three
-        # labels are actually reachable.
-        "texts": [
-            "REPLACE ME with something you're confident is AI-generated.",
-            "REPLACE ME with something you're confident is human-written.",
-            "REPLACE ME with something genuinely borderline.",
-        ],
+        "texts": HUMAN_TEXTS + AI_TEXTS,
     },
-    # A bad-input criterion looks like this. Uncomment and adjust if that's one
-    # of your five — these are raw request bodies, sent exactly as written.
-    #
-    # {
-    #     "name": "bad input",
-    #     "criterion": 3,
-    #     "bodies": [
-    #         {"text": "", "creator_id": "eval_bad_empty"},
-    #         {"creator_id": "eval_bad_missing"},          # no text field at all
-    #         {"text": "word " * 50000, "creator_id": "eval_bad_huge"},
-    #         {"text": None, "creator_id": "eval_bad_null"},
-    #     ],
-    # },
-
-    # TODO: add what your remaining criteria need.
-    #
-    # A criterion about the appeal path can't be tested by sending text alone;
-    # it needs a submission first and then an appeal against the content_id
-    # that came back. You'll need to test that one by hand, or extend this file
-    # and run_eval.py to do it. Saying which you did is part of the write-up.
+    {
+        "name": "label_coverage",
+        "criterion": 3,
+        "texts": HUMAN_TEXTS + AI_TEXTS,
+    },
 ]
 
 

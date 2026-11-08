@@ -1,0 +1,33 @@
+{
+  "dataset": "Independent human validation",
+  "source": "User-supplied original paragraphs",
+  "author_verified": true,
+  "purpose": "Unit 8 Milestone 3 independent validation",
+  "samples": [
+    {
+      "id": "H11",
+      "topic": "Programming",
+      "text": "My experience learning Python has been a great journey because I already had some programming knowledge before starting my computer engineering studies at Florida Atlantic University. I was familiar with programming algorithms and other languages, but Python helped me understand how to develop applications in a simpler and more efficient way. Later, learning JavaScript and React gave me the opportunity to turn my ideas into real web applications that people can access online. What I enjoy most about programming is that there is always something new to learn, and every project gives me an opportunity to improve my skills and become a better developer."
+    },
+    {
+      "id": "H12",
+      "topic": "Teamwork",
+      "text": "One of the biggest challenges I experienced working on a group project was managing people and making sure everyone completed their assigned responsibilities on time. During my WEB103 CodePath class, I was assigned the responsibility of coordinating the group, reviewing the code, and helping improve the overall project. Personally, I feel more comfortable working directly on the technical side than managing people, so this was not an easy task for me. Sometimes everyone has a different way of understanding a problem or approaching a solution. However, I learned that communication, patience, and organization are important skills when working with a team."
+    },
+    {
+      "id": "H13",
+      "topic": "Computer troubleshooting",
+      "text": "One computer problem I solved happened while working on a personal project that required me to create a printed circuit board using a CNC machine. I designed the circuit and completed the PCB layout, but I had a problem converting the design into G-code, which is the format the CNC machine needed to cut and mill the board. The software I was using was not compatible with my machine. I initially struggled to find and install the correct software because I was not very familiar with GitHub. After improving my GitHub skills through my CodePath classes, I was able to find the right software, install it, and finally complete my project."
+    },
+    {
+      "id": "H14",
+      "topic": "Electronics",
+      "text": "One of the electronics projects I really enjoyed working on was designing and building my own printed circuit board. As an electronic engineer, I always enjoy working with hardware and finding ways to turn an idea into something physical. I started by designing the electronic circuit and creating the PCB layout using design software. After that, I had to prepare the design for manufacturing using a CNC machine. This involved converting the design into G-code so the machine could cut and mill the board. Although I encountered some software compatibility problems, I was able to overcome them. This project helped me improve both my electronics and practical engineering skills."
+    },
+    {
+      "id": "H15",
+      "topic": "Personal experience",
+      "text": "One of the most difficult things I have learned recently is how to develop an AI platform that can run locally without depending entirely on external AI services. I am currently working on a system that uses React for the frontend, Node.js for the backend, and llama.cpp to run language models on a local enterprise server. Understanding how all these components communicate with each other was challenging because each technology has its own configuration and requirements. I also had to learn how to manage AI models and their resources. It is still an ongoing learning experience, but I enjoy the challenge because it brings me closer to achieving my professional goals."
+    }
+  ]
+}

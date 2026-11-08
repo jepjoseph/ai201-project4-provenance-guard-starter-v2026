@@ -505,69 +505,166 @@ Evidence: `results/attack_run_2026-11-04_2130_before.md`
 
 ## Run Log and Verdicts
 
-<!-- Your five criteria across three trials. `run_eval.py --label before`. -->
+**Submission input policy:** The maximum submission length is 2,000
+characters, configured through `MAX_TEXT_LENGTH` in `config.py`.
+The `/submit` endpoint rejects oversized, empty, whitespace-only,
+and incorrectly typed text with HTTP 400.
+
+Five acceptance criteria were evaluated across three trials each.
 
 | Criterion | Target | Run 1 | Run 2 | Run 3 | Verdict |
-| --------- | ------ | ----- | ----- | ----- | ------- |
-| 1.        |        |       |       |       |         |
-| 2.        |        |       |       |       |         |
-| 3.        |        |       |       |       |         |
-| 4.        |        |       |       |       |         |
-| 5.        |        |       |       |       |         |
+| --- | --- | --- | --- | --- | --- |
+| 1. Human false positives | At most 1/10 high-confidence AI labels | 0/10 | 0/10 | 0/10 | PASS |
+| 2. AI?human separation | AI mean minus human mean >= +0.20 | +0.0339 | +0.0339 | +0.0339 | FAIL |
+| 3. Label coverage | `human`, `unsure`, and `ai` observed | Only `unsure` | Only `unsure` | Only `unsure` | FAIL |
+| 4. Appeal processing | 10/10 accepted with matching audit entries | 10/10 | 10/10 | 10/10 | PASS |
+| 5. Invalid input handling | 10/10 HTTP 4xx, valid recovery request succeeds | 10/10 | 10/10 | 10/10 | PASS |
 
-**Real output from one trial**, pasted as text, naming the file and function
-that produced it:
+### Evaluation evidence
 
-```json
+- Criteria 1?3 baseline:
+  `results/run_2026-11-08_1506_before.md`
+- Criteria 4?5 baseline:
+  `results/run_extended_2026-11-08_150941_before.md`
+- Criteria 4?5 after the input-validation fix:
+  `results/run_extended_2026-11-08_151919_after.md`
 
-```
+**Actual recorded score values:** The baseline evaluator measured
+mean combined AI-likelihood scores of 0.47027 for human writing and
+0.50414 for AI writing. The difference was +0.03387, below the
+required +0.20. All 20 texts received the `unsure` label.
 
-**Diagnoses**
+### Diagnoses
 
-<!-- For each miss AND each broken attack: the stage and the mechanism.
+**Criterion 2 ? score separation:** The detector combines a GPT-2
+perplexity signal and a stylometric signal. Their combined output did
+not reliably distinguish the original human and AI evaluation groups.
+The problem occurs in the signal and combining stages, not in the
+HTTP route.
 
-     Your service has five stages: the route, signal one, signal two, the
-     combining rule, and the label mapping.
+**Criterion 3 ? label coverage:** The resulting scores remained
+between the configured human and AI thresholds. The label-mapping
+stage therefore returned `unsure` for every evaluated text. The
+thresholds were reachable in principle, but the observed evaluation
+set did not reach them.
 
-     Not a diagnosis:  "The evasion attacks got through."
-     A diagnosis:      "Four evasion inputs got through. All four had typos
-                        added to AI-generated text. My second signal measures
-                        word variety, and typos raise word variety — so it read
-                        them as more human. My combining rule weights that
-                        signal at 0.6, so it dragged the whole score down."
-
-     Look for a pattern. Five failures on one signal is one problem, not five. -->
+**Criterion 5 ? initial failure:** The original route accepted
+a 2,001-character submission. The route lacked enforcement of the
+documented 2,000-character maximum. Adding explicit input validation
+resolved this measured failure.
 
 ---
 
 ## The Improvement
 
-**What I changed:**
+**What I changed:** I introduced a documented maximum submission
+length of 2,000 characters and enforced it at the `/submit` route
+before invoking the detector.
 
-**Which diagnosis pointed at it:**
+**Which diagnosis pointed at it:** The baseline invalid-input
+evaluation accepted an oversized submission. The problem was
+missing route validation, not model scoring.
 
-### Attack Run — After
+**Verification:** After the fix, all ten predefined invalid-input
+cases returned HTTP 4xx in each of three trials. Each trial also
+verified that a subsequent valid submission succeeded.
 
-<!-- Same format. `run_attacks.py --label after` -->
+### Independent scoring experiment
 
-**Did it help, and how do I know:**
+I investigated whether changing the stylometric signal to emphasize
+sentence-length variation and weighting it at 70%, with GPT-2 at 30%,
+would improve AI?human separation.
 
-<!-- Widening the unsure band usually fixes one problem and creates another.
-     Reporting that trade honestly is worth full credit. -->
+On the original evaluation set, the offline candidate appeared
+promising: its estimated separation was +0.2320, with zero
+high-confidence AI labels among the original ten human samples.
+
+I then evaluated the unchanged candidate on five additional,
+independently supplied human-written paragraphs (H11?H15) and five
+new AI-generated paragraphs (A11?A15).
+
+| Metric | Current scoring | Proposed 70/30 scoring |
+| --- | ---: | ---: |
+| Mean human AI-likelihood | 0.6227 | 0.7126 |
+| Mean AI AI-likelihood | 0.5421 | 0.7093 |
+| AI?human separation | -0.0806 | -0.0033 |
+| Human false positives | 1/5 | 4/5 |
+| All three labels observed | No | No |
+
+**Decision:** I rejected the proposed scoring modification because
+it increased false accusations of verified human writing and failed
+to demonstrate useful separation on the independent samples.
+The existing scoring implementation remains unchanged.
+
+### Attack Run ? After
+
+The corrected input-validation behavior is supported by the
+extended acceptance report. A complete post-change adversarial
+attack-suite result is not claimed here unless separately recorded.
+
+**Did it help?** Yes, for oversized submissions: the original
+failure became a consistent HTTP 400 rejection. It did not resolve
+the detector's score-separation and label-coverage limitations.
 
 ---
 
 ## What's Still Broken
 
-<!-- For each attack still getting through and each criterion still missed:
-     what you'd do, and why you stopped. -->
+### Remaining detector limitations
+
+**Criterion 2 ? AI?human separation:** The measured difference
+between the AI and human evaluation groups was only +0.03387,
+below the required +0.20. The existing GPT-2 perplexity and
+stylometric signals do not provide sufficient separation on
+the tested samples.
+
+**Criterion 3 ? label coverage:** All 20 original evaluation
+texts received the `unsure` label in each of the three trials.
+The score distribution did not reach the configured thresholds
+for the `human` and `ai` labels.
+
+**Independent validation:** A proposed scoring modification
+initially appeared promising on the original dataset but
+incorrectly labeled four of five additional verified human
+texts as AI-generated. The modification was rejected.
+
+### Remaining adversarial weaknesses
+
+The baseline adversarial evaluation identified AI-origin
+evasion texts that received `human` or `unsure` classifications,
+as well as unreliable confident classifications for some
+non-prose inputs.
+
+The service also needs further validation of Unicode handling,
+content-type enforcement, and adversarial robustness. The
+existing evidence does not establish that these problems
+have all been resolved.
+
+### What I would improve next
+
+I would collect a larger and more diverse dataset of verified
+human and AI writing, including informal writing, technical
+writing, different languages, and edited AI-generated text.
+
+I would then calibrate scoring thresholds on a development
+dataset and evaluate the final configuration on a separate,
+previously unseen test set.
+
+Additional improvements would include clearer handling of
+unsupported input formats, stronger request validation,
+and automated regression tests for known adversarial cases.
 
 **The trade I'd make if this ran for real:**
 
-<!-- Two sentences. Fewer wrong accusations means more AI text getting through.
-     Say which way you'd go and WHO PAYS FOR IT. -->
+I would prioritize reducing false accusations of human
+authors, even if that means allowing more AI-generated text
+to receive an `unsure` label. Human writers bear the
+greater immediate cost when a detector incorrectly
+presents their original work as AI-generated.
 
-     SUBMISSION CHECKLIST — unit 7
+---
+
+SUBMISSION CHECKLIST — unit 7
 
        [x] criteria.md has five numbered criteria, each naming a target
        [x] Each has a reason underneath
