@@ -798,6 +798,112 @@ verified evaluation samples.
 
 ---
 
+
+---
+
+## Unit 8 Milestone 5 - One Improvement and Re-evaluation
+
+### Selected improvement
+
+The single selected improvement is submission-length validation
+at the `/submit` route.
+
+- **Stage:** Route/input validation
+- **Files:** `app.py`, `config.py`
+- **Limit:** 2,000 characters
+- **Mechanism:** Reject oversized text with HTTP 400 before
+  invoking the detection signals.
+- **Reason:** The original invalid-input evaluation accepted
+  a 2,001-character submission with HTTP 200.
+- **Scope:** No changes to model weights, stylometric features,
+  scoring thresholds, or label mapping.
+
+The validation was implemented and committed during Milestone 3.
+Milestone 5 re-evaluates that same change rather than adding
+another modification.
+
+### Before and after - acceptance criteria
+
+| Criterion | Original before | Full after | Outcome |
+| --- | --- | --- | --- |
+| 1. Human false positives | 0/10 in all 3 trials | 0/10 in all 3 trials | MET, unchanged |
+| 2. AI-human score separation | +0.03387, target +0.20 | Still below target | MISSED |
+| 3. Label coverage | Only `unsure` in all 3 trials | Only `unsure` in all 3 trials | MISSED |
+| 4. Valid appeals | 10/10 in all 3 trials | 10/10 in all 3 trials | MET, unchanged |
+| 5. Invalid inputs and recovery | Initial baseline 9/10 | 10/10 in all 3 trials | MET after fix |
+
+Criterion 5's original baseline failed because an oversized
+submission was accepted. Its corrected post-fix result passed.
+The later full evaluation also reported PASS.
+
+A malformed-JSON probe received HTTP 429 during the later
+extended evaluation; this satisfies the observed HTTP 4xx
+requirement but does not independently prove that malformed
+JSON was rejected by the parser rather than rate limiting.
+
+### Before and after - full attack set
+
+Both attack runs contain 56 cases. The full case-by-case
+reports are retained as evidence.
+
+| Attack or group | Before | After | Interpretation |
+| --- | --- | --- | --- |
+| EV01 | `human` | `human` | Evasion remains effective |
+| EV02-EV04 | `unsure` | `unsure` | Evasions remain unresolved |
+| EV05 | `human` | `human` | Evasion remains effective |
+| EV06-EV09 | `unsure` | `unsure` | Evasions remain unresolved |
+| EV10 | `ai` | `ai` | Detector held |
+| MF02 | HTTP 500 | HTTP 400 | Invalid-input handling improved |
+| RQ10-RQ11 | HTTP 429 | HTTP 429 | Content-type behavior remains unproven |
+| Oversized evaluation probe | HTTP 200 at baseline | HTTP 400 | Selected improvement worked |
+
+The attack runner requires manual interpretation of its
+outcomes. A question mark in the report is not an automatic
+pass or failure.
+
+### Complete evidence
+
+**Before:**
+
+- [Full attack run - before](results/attack_run_2026-11-04_2130_before.md)
+- [Criteria 1-3 - before](results/run_2026-11-08_1506_before.md)
+- [Criteria 4-5 - original baseline](results/run_extended_2026-11-08_150941_before.md)
+
+**After:**
+
+- [Full attack run - after](results/attack_run_2026-11-08_1543_after.md)
+- [Criteria 1-3 - after](results/run_2026-11-08_1543_after.md)
+- [Criteria 4-5 - after](results/run_extended_2026-11-08_154353_after.md)
+
+### Did the improvement help?
+
+**Yes, for the specific input-validation failure.**
+The oversized submission is now rejected with HTTP 400
+instead of being accepted with HTTP 200.
+
+The change did **not** solve AI-human score separation,
+label coverage, or the nine identified evasion cases.
+
+MF02 also improved from HTTP 500 to HTTP 400, but the
+evidence does not isolate the character-limit check as
+the cause of that particular improvement.
+
+### Trade-off and remaining limitations
+
+The 2,000-character limit protects the route from
+oversized submissions, but also prevents legitimate
+writers from submitting longer documents in one request.
+
+This improvement addresses input handling, not detection
+accuracy. The scoring limitations and adversarial
+evasion vulnerabilities remain.
+
+**Milestone 5 verdict:** The targeted validation
+improvement helped, with a documented length restriction
+and no demonstrated improvement in classification accuracy.
+
+---
+
 <!-- ═════════════════════════════════════════════════════════════════════
      SUBMISSION CHECKLIST — unit 8
 
